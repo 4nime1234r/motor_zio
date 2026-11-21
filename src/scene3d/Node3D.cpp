@@ -83,10 +83,23 @@ std::vector<std::string> MeshNode::animationNames() const
     return names;
 }
 
-bool MeshNode::playAnimation(const std::string& name, bool loop)
+bool MeshNode::playAnimation(const std::string& name, bool loop, float fadeSeconds)
 {
     if (!mesh_ || !mesh_->skin || !mesh_->skin->findClip(name))
         return false;
+    if (fadeSeconds > 0.f && posed_)
+    {
+        prevName_     = animName_;
+        prevTime_     = animTime_;
+        fadeDuration_ = fadeSeconds;
+        fadeElapsed_  = 0.f;
+    }
+    else
+    {
+        prevName_.clear();
+        fadeDuration_ = 0.f;
+        fadeElapsed_  = 0.f;
+    }
     animName_    = name;
     animLoop_    = loop;
     animTime_    = 0.f;
@@ -100,6 +113,9 @@ void MeshNode::stopAnimation()
     animPlaying_ = false;
     animName_.clear();
     animTime_ = 0.f;
+    prevName_.clear();
+    fadeDuration_ = 0.f;
+    fadeElapsed_  = 0.f;
     posed_.reset();
 }
 
@@ -119,6 +135,14 @@ void MeshNode::update(float dt)
     {
         animPlaying_ = false;
         return;
+    }
+    if (isBlending())
+    {
+        fadeElapsed_ += dt;
+        prevTime_ += dt * animSpeed_;
+        if (const AnimationClip* prev = mesh_->skin->findClip(prevName_))
+            if (prev->duration > 0.f)
+                prevTime_ = std::fmod(prevTime_, prev->duration);
     }
     animTime_ += dt * animSpeed_;
     if (clip->duration > 0.f)
@@ -144,7 +168,18 @@ void MeshNode::pose()
         return;
     const AnimationClip* clip = mesh_->skin->findClip(animName_);
     std::vector<math::Mat4> matrices;
-    mesh_->skin->skinMatrices(clip, animTime_, matrices);
+    if (isBlending())
+    {
+        std::vector<JointPose> from, to, mixed;
+        mesh_->skin->samplePose(mesh_->skin->findClip(prevName_), prevTime_, from);
+        mesh_->skin->samplePose(clip, animTime_, to);
+        Skin::blendPoses(from, to, fadeElapsed_ / fadeDuration_, mixed);
+        mesh_->skin->skinMatrices(mixed, matrices);
+    }
+    else
+    {
+        mesh_->skin->skinMatrices(clip, animTime_, matrices);
+    }
     if (!posed_)
         posed_ = std::make_shared<Mesh>();
     mesh_->skin->apply(*mesh_, matrices, *posed_);

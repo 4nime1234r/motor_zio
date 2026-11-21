@@ -395,6 +395,74 @@ std::unique_ptr<zio::ui::Widget> InspectorPanel::build()
             services_.context().markDirty();
         }
     });
+
+    animBox_ = meshBox_->add<zio::ui::VBox>();
+    animBox_->add<zio::ui::Separator>();
+    animBox_->add<zio::ui::Label>(std::string("Animación"));
+    auto* pick = animBox_->add<zio::ui::HBox>();
+    auto* prev = pick->add<zio::ui::Button>(std::string("<"));
+    animName_  = pick->add<zio::ui::Label>(std::string());
+    animName_->setExpand(true, false);
+    auto* next = pick->add<zio::ui::Button>(std::string(">"));
+
+    const auto step = [this](int delta) {
+        auto* mesh = services_.context().selectedMesh();
+        if (!mesh || syncing_)
+            return;
+        const auto names = mesh->animationNames();
+        if (names.empty())
+            return;
+        const int count = static_cast<int>(names.size());
+        animIndex_      = ((animIndex_ + delta) % count + count) % count;
+        if (mesh->isAnimationPlaying())
+            mesh->playAnimation(names[static_cast<std::size_t>(animIndex_)], mesh->animationLoops(), 0.25f);
+        services_.context().markDirty();
+    };
+    prev->setOnClick([step]() { step(-1); });
+    next->setOnClick([step]() { step(1); });
+
+    auto* controls = animBox_->add<zio::ui::HBox>();
+    animPlay_      = controls->add<zio::ui::Button>(std::string("Reproducir"));
+    animPlay_->setOnClick([this]() {
+        auto* mesh = services_.context().selectedMesh();
+        if (!mesh || syncing_)
+            return;
+        if (mesh->isAnimationPlaying())
+        {
+            mesh->stopAnimation();
+        }
+        else
+        {
+            const auto names = mesh->animationNames();
+            if (names.empty())
+                return;
+            animIndex_ = std::clamp(animIndex_, 0, static_cast<int>(names.size()) - 1);
+            mesh->playAnimation(names[static_cast<std::size_t>(animIndex_)], animLoop_->checked());
+        }
+        services_.context().markDirty();
+    });
+    animLoop_ = controls->add<zio::ui::CheckBox>(std::string("Bucle"));
+    animLoop_->setChecked(true);
+    animLoop_->setOnToggled([this](bool checked) {
+        auto* mesh = services_.context().selectedMesh();
+        if (!mesh || syncing_)
+            return;
+        mesh->setAnimationLoop(checked);
+        services_.context().markDirty();
+    });
+
+    animSpeed_ = animBox_->add<zio::ui::NumberEdit>();
+    animSpeed_->setStep(0.05);
+    animSpeed_->setDecimals(2);
+    animSpeed_->setLabel("Velocidad");
+    animSpeed_->setValue(1.0);
+    animSpeed_->setOnChanged([this](double value) {
+        auto* mesh = services_.context().selectedMesh();
+        if (!mesh || syncing_)
+            return;
+        mesh->setAnimationSpeed(static_cast<float>(value));
+        services_.context().markDirty();
+    });
     return scroll;
 }
 
@@ -451,6 +519,28 @@ void InspectorPanel::refresh()
         if (!uv_[1]->editing())
             uv_[1]->setValue(uv.y);
         shadow_->setChecked(mesh->castShadow());
+
+        const bool skeleton = mesh->hasSkeleton();
+        animBox_->setVisible(skeleton);
+        if (skeleton)
+        {
+            const auto names = mesh->animationNames();
+            if (mesh->isAnimationPlaying())
+            {
+                for (std::size_t i = 0; i < names.size(); ++i)
+                    if (names[i] == mesh->currentAnimation())
+                        animIndex_ = static_cast<int>(i);
+            }
+            animIndex_ = names.empty() ? 0 : std::clamp(animIndex_, 0, static_cast<int>(names.size()) - 1);
+            animName_->setText(names.empty() ? std::string("(sin animaciones)")
+                                             : names[static_cast<std::size_t>(animIndex_)]);
+            animPlay_->setText(mesh->isAnimationPlaying() ? "Detener" : "Reproducir");
+            animPlay_->setEnabled(!names.empty());
+            if (mesh->isAnimationPlaying())
+                animLoop_->setChecked(mesh->animationLoops());
+            if (!animSpeed_->editing())
+                animSpeed_->setValue(mesh->animationSpeed());
+        }
     }
     syncing_ = false;
 }

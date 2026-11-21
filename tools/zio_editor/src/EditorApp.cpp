@@ -544,6 +544,9 @@ void EditorApp::onBeforeTick(float dt)
     performance_.refresh(realDt_);
     refreshStatus();
 
+    if (!context_.playing())
+        previewAnimations(context_.scene().root(), realDt_);
+
     viewport_.update(realDt_, ui_->hasPopups() || textFocused());
 
     auto& input = zio::input::InputManager::instance();
@@ -551,6 +554,15 @@ void EditorApp::onBeforeTick(float dt)
         context_.commitHistory();
 
     host_->frame(realDt_);
+}
+
+void EditorApp::previewAnimations(zio::scene3d::Node3D& node, float dt)
+{
+    if (auto* mesh = dynamic_cast<zio::scene3d::MeshNode*>(&node))
+        if (mesh->isAnimationPlaying())
+            mesh->update(dt);
+    for (const auto& child : node.children())
+        previewAnimations(*child, dt);
 }
 
 void EditorApp::onRender(float dt)

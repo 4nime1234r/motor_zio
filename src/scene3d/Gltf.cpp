@@ -33,9 +33,9 @@ struct Loader
     bool materialTaken         = false;
     std::vector<long> parentOf;
     std::shared_ptr<Skin> skin;
-    long activeSkin  = -1;
     long currentSkin = -1;
-    std::map<long, int> nodeToJoint;
+    std::map<long, int> skinOffset;
+    std::map<long, std::vector<int>> nodeJoints;
     std::vector<VertexSkin> skinVerts;
 
     bool fail(const std::string& msg)
@@ -360,15 +360,27 @@ struct Loader
 
     bool buildSkin(long skinIndex)
     {
+        if (skinOffset.count(skinIndex))
+            return true;
         const Value* s = at("skins", skinIndex);
         if (!s)
             return fail("missing skin");
         const Array* joints = array(*s, "joints");
         if (!joints || joints->empty())
             return fail("skin without joints");
-        skin = std::make_shared<Skin>();
+        if (!skin)
+        {
+            skin = std::make_shared<Skin>();
+            skinVerts.resize(mesh->vertices.size());
+        }
+        const int offset = static_cast<int>(skin->joints.size());
+        if (offset + joints->size() > 65535)
+            return fail("too many joints");
+        skinOffset[skinIndex] = offset;
+
+        std::map<long, int> local;
         for (std::size_t i = 0; i < joints->size(); ++i)
-            nodeToJoint[static_cast<long>(number(&(*joints)[i], -1))] = static_cast<int>(i);
+            local[static_cast<long>(number(&(*joints)[i], -1))] = static_cast<int>(i);
 
         std::vector<math::Mat4> inverse(joints->size());
         if (const Value* ibm = s->find("inverseBindMatrices"))
@@ -411,11 +423,12 @@ struct Loader
             const long parent = static_cast<std::size_t>(nodeIndex) < parentOf.size()
                                     ? parentOf[static_cast<std::size_t>(nodeIndex)]
                                     : -1;
-            const auto it = nodeToJoint.find(parent);
-            if (it != nodeToJoint.end())
-                joint.parent = it->second;
+            const auto it = local.find(parent);
+            if (it != local.end())
+                joint.parent = offset + it->second;
             else
                 joint.parentTransform = ancestorWorld(nodeIndex);
+            nodeJoints[nodeIndex].push_back(offset + static_cast<int>(i));
             skin->joints.push_back(std::move(joint));
         }
         return true;
@@ -443,15 +456,14 @@ struct Loader
                 const Value* target = ch.find("target");
                 if (!target)
                     continue;
-                const auto it = nodeToJoint.find(static_cast<long>(number(target->find("node"), -1)));
-                if (it == nodeToJoint.end())
+                const auto it = nodeJoints.find(static_cast<long>(number(target->find("node"), -1)));
+                if (it == nodeJoints.end())
                     continue;
                 const Value* pathValue = target->find("path");
                 const auto* pathText   = pathValue ? std::get_if<std::string>(&pathValue->v) : nullptr;
                 if (!pathText)
                     continue;
                 AnimationChannel c;
-                c.joint = it->second;
                 if (*pathText == "translation")
                     c.path = AnimationPath::Translation;
                 else if (*pathText == "rotation")
@@ -469,7 +481,9 @@ struct Loader
                 if (const Value* iv = sampler.find("interpolation"))
                     if (const auto* str = std::get_if<std::string>(&iv->v))
                         interpolation = *str;
-                c.step = interpolation == "STEP";
+                c.interpolation = interpolation == "STEP"          ? Interpolation::Step
+                                  : interpolation == "CUBICSPLINE" ? Interpolation::CubicSpline
+                                                                   : Interpolation::Linear;
 
                 Accessor input, output;
                 if (!accessor(static_cast<long>(number(sampler.find("input"), -1)), input) ||
@@ -478,19 +492,25 @@ struct Loader
                 const std::size_t width = c.path == AnimationPath::Rotation ? 4 : 3;
                 if (input.components != 1 || output.components != width)
                     continue;
-                const bool cubic = interpolation == "CUBICSPLINE";
-                if (output.count < input.count * (cubic ? 3 : 1))
+                const std::size_t perKey = c.interpolation == Interpolation::CubicSpline ? 3 : 1;
+                if (output.count < input.count * perKey)
                     continue;
                 for (std::size_t k = 0; k < input.count; ++k)
                 {
                     c.times.push_back(component(input, k, 0));
-                    const std::size_t row = cubic ? k * 3 + 1 : k;
-                    for (std::size_t w = 0; w < width; ++w)
-                        c.values.push_back(component(output, row, w));
+                    for (std::size_t r = 0; r < perKey; ++r)
+                        for (std::size_t w = 0; w < width; ++w)
+                            c.values.push_back(component(output, k * perKey + r, w));
                 }
-                if (!c.times.empty())
-                    clip.duration = (std::max)(clip.duration, c.times.back());
-                clip.channels.push_back(std::move(c));
+                if (c.times.empty())
+                    continue;
+                clip.duration = (std::max)(clip.duration, c.times.back());
+                for (const int joint : it->second)
+                {
+                    AnimationChannel copy = c;
+                    copy.joint            = joint;
+                    clip.channels.push_back(std::move(copy));
+                }
             }
             if (!clip.channels.empty())
                 skin->clips.push_back(std::move(clip));
@@ -529,31 +549,34 @@ struct Loader
             hasUv = uv.components == 2 && uv.count == pos.count;
         }
 
-        Accessor jointsAccessor, weightsAccessor;
-        bool skinned = false;
-        if (currentSkin >= 0 && (activeSkin < 0 || activeSkin == currentSkin))
+        Accessor jointsAccessor[2], weightsAccessor[2];
+        bool hasSet[2] = {false, false};
+        bool skinned   = false;
+        int offset     = 0;
+        if (currentSkin >= 0)
         {
-            const Value* jv = attrs->find("JOINTS_0");
-            const Value* wv = attrs->find("WEIGHTS_0");
-            if (jv && wv)
+            const char* jointKeys[2]  = {"JOINTS_0", "JOINTS_1"};
+            const char* weightKeys[2] = {"WEIGHTS_0", "WEIGHTS_1"};
+            for (int set = 0; set < 2; ++set)
             {
-                if (!accessor(static_cast<long>(number(jv, -1)), jointsAccessor) ||
-                    !accessor(static_cast<long>(number(wv, -1)), weightsAccessor))
+                const Value* jv = attrs->find(jointKeys[set]);
+                const Value* wv = attrs->find(weightKeys[set]);
+                if (!jv || !wv)
+                    continue;
+                if (!accessor(static_cast<long>(number(jv, -1)), jointsAccessor[set]) ||
+                    !accessor(static_cast<long>(number(wv, -1)), weightsAccessor[set]))
                     return false;
-                skinned = jointsAccessor.components == 4 && weightsAccessor.components == 4 &&
-                          jointsAccessor.count == pos.count && weightsAccessor.count == pos.count;
+                hasSet[set] = jointsAccessor[set].components == 4 && weightsAccessor[set].components == 4 &&
+                              jointsAccessor[set].count == pos.count && weightsAccessor[set].count == pos.count;
             }
+            skinned = hasSet[0];
         }
         if (skinned)
         {
-            if (activeSkin < 0)
-            {
-                activeSkin = currentSkin;
-                if (!buildSkin(currentSkin))
-                    return false;
-                skinVerts.resize(mesh->vertices.size());
-            }
-            world = math::Mat4{};
+            if (!buildSkin(currentSkin))
+                return false;
+            offset = skinOffset[currentSkin];
+            world  = math::Mat4{};
         }
 
         std::vector<std::uint32_t> indices;
@@ -619,17 +642,18 @@ struct Loader
                 const float u = hasUv ? component(uv, i, 0) : 0.f;
                 const float v = hasUv ? component(uv, i, 1) : 0.f;
                 mesh->vertices.push_back({p[k], n, u, v});
-                if (activeSkin >= 0)
+                if (skin)
                 {
                     VertexSkin vs;
                     if (skinned)
-                    {
-                        for (std::size_t w = 0; w < 4; ++w)
-                        {
-                            vs.joints[w]  = static_cast<std::uint16_t>(component(jointsAccessor, i, w));
-                            vs.weights[w] = component(weightsAccessor, i, w);
-                        }
-                    }
+                        for (std::size_t set = 0; set < 2; ++set)
+                            if (hasSet[set])
+                                for (std::size_t w = 0; w < 4; ++w)
+                                {
+                                    vs.joints[set * 4 + w] =
+                                        static_cast<std::uint16_t>(component(jointsAccessor[set], i, w) + offset);
+                                    vs.weights[set * 4 + w] = component(weightsAccessor[set], i, w);
+                                }
                     skinVerts.push_back(vs);
                 }
             }

@@ -11,54 +11,67 @@ namespace zio::scene3d
 namespace
 {
 
-struct Sample
+void sampleChannel(const AnimationChannel& c, float time, std::size_t width, float* out)
 {
-    std::size_t index = 0;
-    std::size_t next  = 0;
-    float t           = 0.f;
-};
+    const std::size_t stride = c.interpolation == Interpolation::CubicSpline ? width * 3 : width;
+    const std::size_t valueOffset = c.interpolation == Interpolation::CubicSpline ? width : 0;
+    const auto value = [&](std::size_t key, std::size_t k) { return c.values[key * stride + valueOffset + k]; };
 
-Sample locate(const std::vector<float>& times, float time)
-{
-    Sample s;
-    if (times.size() < 2 || time <= times.front())
-        return s;
-    if (time >= times.back())
+    const std::size_t count = c.times.size();
+    if (count == 1 || time <= c.times.front())
     {
-        s.index = s.next = times.size() - 1;
-        return s;
+        for (std::size_t k = 0; k < width; ++k)
+            out[k] = value(0, k);
+        return;
     }
-    const auto it = std::upper_bound(times.begin(), times.end(), time);
-    s.next        = static_cast<std::size_t>(it - times.begin());
-    s.index       = s.next - 1;
-    const float span = times[s.next] - times[s.index];
-    s.t              = span > 0.f ? (time - times[s.index]) / span : 0.f;
-    return s;
-}
+    if (time >= c.times.back())
+    {
+        for (std::size_t k = 0; k < width; ++k)
+            out[k] = value(count - 1, k);
+        return;
+    }
+    const auto it         = std::upper_bound(c.times.begin(), c.times.end(), time);
+    const std::size_t k1  = static_cast<std::size_t>(it - c.times.begin());
+    const std::size_t k0  = k1 - 1;
+    const float span      = c.times[k1] - c.times[k0];
+    const float s         = span > 0.f ? (time - c.times[k0]) / span : 0.f;
 
-math::Vec3 sampleVec3(const AnimationChannel& c, float time)
-{
-    const Sample s = locate(c.times, time);
-    const auto at  = [&](std::size_t i) {
-        return math::Vec3{c.values[i * 3], c.values[i * 3 + 1], c.values[i * 3 + 2]};
-    };
-    const math::Vec3 a = at(s.index);
-    if (c.step || s.index == s.next)
-        return a;
-    const math::Vec3 b = at(s.next);
-    return {a.x + (b.x - a.x) * s.t, a.y + (b.y - a.y) * s.t, a.z + (b.z - a.z) * s.t};
-}
-
-math::Quaternion sampleQuat(const AnimationChannel& c, float time)
-{
-    const Sample s = locate(c.times, time);
-    const auto at  = [&](std::size_t i) {
-        return math::Quaternion{c.values[i * 4], c.values[i * 4 + 1], c.values[i * 4 + 2], c.values[i * 4 + 3]};
-    };
-    const math::Quaternion a = at(s.index);
-    if (c.step || s.index == s.next)
-        return a.normalized();
-    return math::Quaternion::slerp(a.normalized(), at(s.next).normalized(), s.t);
+    if (c.interpolation == Interpolation::Step)
+    {
+        for (std::size_t k = 0; k < width; ++k)
+            out[k] = value(k0, k);
+        return;
+    }
+    if (c.interpolation == Interpolation::CubicSpline)
+    {
+        const float s2 = s * s, s3 = s2 * s;
+        const float h00 = 2.f * s3 - 3.f * s2 + 1.f;
+        const float h10 = s3 - 2.f * s2 + s;
+        const float h01 = -2.f * s3 + 3.f * s2;
+        const float h11 = s3 - s2;
+        for (std::size_t k = 0; k < width; ++k)
+        {
+            const float v0 = c.values[k0 * stride + width + k];
+            const float b0 = c.values[k0 * stride + width * 2 + k] * span;
+            const float a1 = c.values[k1 * stride + k] * span;
+            const float v1 = c.values[k1 * stride + width + k];
+            out[k]         = h00 * v0 + h10 * b0 + h01 * v1 + h11 * a1;
+        }
+        return;
+    }
+    if (width == 4)
+    {
+        const math::Quaternion a{value(k0, 0), value(k0, 1), value(k0, 2), value(k0, 3)};
+        const math::Quaternion b{value(k1, 0), value(k1, 1), value(k1, 2), value(k1, 3)};
+        const math::Quaternion q = math::Quaternion::slerp(a.normalized(), b.normalized(), s);
+        out[0] = q.x;
+        out[1] = q.y;
+        out[2] = q.z;
+        out[3] = q.w;
+        return;
+    }
+    for (std::size_t k = 0; k < width; ++k)
+        out[k] = value(k0, k) + (value(k1, k) - value(k0, k)) * s;
 }
 
 }
@@ -71,50 +84,74 @@ const AnimationClip* Skin::findClip(const std::string& name) const
     return nullptr;
 }
 
-void Skin::skinMatrices(const AnimationClip* clip, float time, std::vector<math::Mat4>& out) const
+void Skin::restPose(std::vector<JointPose>& out) const
 {
-    const std::size_t count = joints.size();
-    std::vector<math::Vec3> translation(count), scale(count);
-    std::vector<math::Quaternion> rotation(count);
-    for (std::size_t i = 0; i < count; ++i)
-    {
-        translation[i] = joints[i].translation;
-        rotation[i]    = joints[i].rotation;
-        scale[i]       = joints[i].scale;
-    }
+    out.resize(joints.size());
+    for (std::size_t i = 0; i < joints.size(); ++i)
+        out[i] = {joints[i].translation, joints[i].rotation, joints[i].scale};
+}
 
-    if (clip)
+void Skin::samplePose(const AnimationClip* clip, float time, std::vector<JointPose>& out) const
+{
+    restPose(out);
+    if (!clip)
+        return;
+    for (const AnimationChannel& c : clip->channels)
     {
-        for (const AnimationChannel& c : clip->channels)
+        if (c.joint < 0 || static_cast<std::size_t>(c.joint) >= joints.size() || c.times.empty())
+            continue;
+        const std::size_t width  = c.path == AnimationPath::Rotation ? 4 : 3;
+        const std::size_t stride = c.interpolation == Interpolation::CubicSpline ? width * 3 : width;
+        if (c.values.size() < c.times.size() * stride)
+            continue;
+        float v[4] = {};
+        sampleChannel(c, time, width, v);
+        JointPose& p = out[static_cast<std::size_t>(c.joint)];
+        switch (c.path)
         {
-            if (c.joint < 0 || static_cast<std::size_t>(c.joint) >= count || c.times.empty())
-                continue;
-            const std::size_t j     = static_cast<std::size_t>(c.joint);
-            const std::size_t width = c.path == AnimationPath::Rotation ? 4 : 3;
-            if (c.values.size() < c.times.size() * width)
-                continue;
-            switch (c.path)
-            {
-            case AnimationPath::Translation:
-                translation[j] = sampleVec3(c, time);
-                break;
-            case AnimationPath::Scale:
-                scale[j] = sampleVec3(c, time);
-                break;
-            case AnimationPath::Rotation:
-                rotation[j] = sampleQuat(c, time);
-                break;
-            }
+        case AnimationPath::Translation:
+            p.translation = {v[0], v[1], v[2]};
+            break;
+        case AnimationPath::Scale:
+            p.scale = {v[0], v[1], v[2]};
+            break;
+        case AnimationPath::Rotation:
+            p.rotation = math::Quaternion{v[0], v[1], v[2], v[3]}.normalized();
+            break;
         }
     }
+}
 
+void Skin::blendPoses(const std::vector<JointPose>& from, const std::vector<JointPose>& to, float t,
+                      std::vector<JointPose>& out)
+{
+    const std::size_t n = std::min(from.size(), to.size());
+    out.resize(n);
+    t = std::clamp(t, 0.f, 1.f);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const JointPose& a = from[i];
+        const JointPose& b = to[i];
+        out[i].translation = {a.translation.x + (b.translation.x - a.translation.x) * t,
+                              a.translation.y + (b.translation.y - a.translation.y) * t,
+                              a.translation.z + (b.translation.z - a.translation.z) * t};
+        out[i].scale       = {a.scale.x + (b.scale.x - a.scale.x) * t, a.scale.y + (b.scale.y - a.scale.y) * t,
+                              a.scale.z + (b.scale.z - a.scale.z) * t};
+        out[i].rotation    = math::Quaternion::slerp(a.rotation, b.rotation, t);
+    }
+}
+
+void Skin::skinMatrices(const std::vector<JointPose>& pose, std::vector<math::Mat4>& out) const
+{
+    const std::size_t count = joints.size();
     std::vector<math::Mat4> global(count);
     std::vector<char> done(count, 0);
     const auto compute = [&](auto&& self, std::size_t i, int depth) -> void {
         if (done[i])
             return;
-        const math::Mat4 local =
-            math::Mat4::translation(translation[i]) * math::Mat4::rotation(rotation[i]) * math::Mat4::scale(scale[i]);
+        const JointPose& p     = pose[i];
+        const math::Mat4 local = math::Mat4::translation(p.translation) * math::Mat4::rotation(p.rotation) *
+                                 math::Mat4::scale(p.scale);
         const int parent = joints[i].parent;
         if (parent >= 0 && static_cast<std::size_t>(parent) < count && depth < 256)
         {
@@ -135,6 +172,13 @@ void Skin::skinMatrices(const AnimationClip* clip, float time, std::vector<math:
         out[i] = global[i] * joints[i].inverseBind;
 }
 
+void Skin::skinMatrices(const AnimationClip* clip, float time, std::vector<math::Mat4>& out) const
+{
+    std::vector<JointPose> pose;
+    samplePose(clip, time, pose);
+    skinMatrices(pose, out);
+}
+
 void Skin::apply(const Mesh& bind, const std::vector<math::Mat4>& skinMatrices, Mesh& out) const
 {
     const std::size_t n = bind.vertices.size();
@@ -147,11 +191,13 @@ void Skin::apply(const Mesh& bind, const std::vector<math::Mat4>& skinMatrices, 
         if (i >= vertices.size())
             continue;
         const VertexSkin& vs = vertices[i];
-        const float total    = vs.weights[0] + vs.weights[1] + vs.weights[2] + vs.weights[3];
+        float total          = 0.f;
+        for (int k = 0; k < kMaxInfluences; ++k)
+            total += vs.weights[k];
         if (!(total > 0.f))
             continue;
         math::Vec3 p{0.f, 0.f, 0.f}, nrm{0.f, 0.f, 0.f};
-        for (int k = 0; k < 4; ++k)
+        for (int k = 0; k < kMaxInfluences; ++k)
         {
             const float w = vs.weights[k] / total;
             if (w <= 0.f || vs.joints[k] >= skinMatrices.size())

@@ -14,6 +14,8 @@ namespace zio::scene3d
 
 class Mesh;
 
+constexpr int kMaxInfluences = 8;
+
 struct SkinJoint
 {
     std::string name;
@@ -32,11 +34,18 @@ enum class AnimationPath
     Scale
 };
 
+enum class Interpolation
+{
+    Linear,
+    Step,
+    CubicSpline
+};
+
 struct AnimationChannel
 {
-    int joint          = 0;
-    AnimationPath path = AnimationPath::Translation;
-    bool step          = false;
+    int joint                = 0;
+    AnimationPath path       = AnimationPath::Translation;
+    Interpolation interpolation = Interpolation::Linear;
     std::vector<float> times;
     std::vector<float> values;
 };
@@ -50,8 +59,15 @@ struct AnimationClip
 
 struct VertexSkin
 {
-    std::uint16_t joints[4] = {0, 0, 0, 0};
-    float weights[4]        = {0.f, 0.f, 0.f, 0.f};
+    std::uint16_t joints[kMaxInfluences] = {};
+    float weights[kMaxInfluences]        = {};
+};
+
+struct JointPose
+{
+    math::Vec3 translation;
+    math::Quaternion rotation;
+    math::Vec3 scale;
 };
 
 struct ZIO_API Skin
@@ -62,6 +78,11 @@ struct ZIO_API Skin
 
     const AnimationClip* findClip(const std::string& name) const;
 
+    void restPose(std::vector<JointPose>& out) const;
+    void samplePose(const AnimationClip* clip, float time, std::vector<JointPose>& out) const;
+    static void blendPoses(const std::vector<JointPose>& from, const std::vector<JointPose>& to, float t,
+                           std::vector<JointPose>& out);
+    void skinMatrices(const std::vector<JointPose>& pose, std::vector<math::Mat4>& out) const;
     void skinMatrices(const AnimationClip* clip, float time, std::vector<math::Mat4>& out) const;
 
     void apply(const Mesh& bind, const std::vector<math::Mat4>& skinMatrices, Mesh& out) const;

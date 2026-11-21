@@ -56,13 +56,16 @@ void append(std::vector<std::uint8_t>& buf, const T* data, std::size_t count)
     buf.insert(buf.end(), bytes, bytes + sizeof(T) * count);
 }
 
-std::string armJson(const std::vector<std::uint8_t>& buf)
+std::string armJson(const std::vector<std::uint8_t>& buf, bool twoSkins = false)
 {
-    return R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,2]}],)"
+    const std::string extraNode = twoSkins ? R"(,{"name":"malla2","mesh":0,"skin":1})" : "";
+    const std::string extraSkin = twoSkins ? R"(,{"joints":[0,1],"inverseBindMatrices":4})" : "";
+    return std::string(R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,2)") + (twoSkins ? ",3" : "") + "]}],"
            R"("nodes":[{"name":"raiz","children":[1],"translation":[0,0,0]},)"
            R"({"name":"codo","translation":[1,0,0]},)"
-           R"({"name":"malla","mesh":0,"skin":0}],)"
-           R"("skins":[{"joints":[0,1],"inverseBindMatrices":4}],)"
+           R"({"name":"malla","mesh":0,"skin":0})" +
+           extraNode + R"(],)"
+           R"("skins":[{"joints":[0,1],"inverseBindMatrices":4})" + extraSkin + R"(],)"
            R"("meshes":[{"primitives":[{"attributes":{"POSITION":0,"JOINTS_0":1,"WEIGHTS_0":2},"indices":3}]}],)"
            R"("animations":[{"name":"doblar","channels":[{"sampler":0,"target":{"node":1,"path":"rotation"}}],)"
            R"("samplers":[{"input":5,"output":6,"interpolation":"LINEAR"}]}],)"
@@ -185,6 +188,100 @@ int main()
     else
     {
         check(false, "un hijo tras leer");
+    }
+
+    {
+        const auto twoPath = dir / "dos.gltf";
+        {
+            std::ofstream f(twoPath, std::ios::binary);
+            const std::string json = armJson(armBuffer(), true);
+            f.write(json.data(), static_cast<std::streamsize>(json.size()));
+        }
+        auto two = Mesh::fromSource(twoPath.string(), &error);
+        if (!two)
+            std::printf("error: %s\n", error.c_str());
+        check(two && two->skin && two->skin->joints.size() == 4, "dos esqueletos se unen en uno de cuatro huesos");
+        check(two && two->vertices.size() == 6 && two->skin->vertices.size() == 6, "los vertices de ambos modelos se conservan");
+        if (two && two->skin && two->vertices.size() == 6)
+        {
+            check(two->skin->clips.size() == 1 && two->skin->clips[0].channels.size() == 2,
+                  "la animacion mueve los huesos de ambos esqueletos");
+            std::vector<zio::math::Mat4> m;
+            two->skin->skinMatrices(two->skin->findClip("doblar"), 1.f, m);
+            Mesh out;
+            two->skin->apply(*two, m, out);
+            check(near(out.vertices[2].position.y, 1.f) && near(out.vertices[5].position.y, 1.f),
+                  "ambos modelos se deforman");
+        }
+    }
+
+    {
+        Skin cubic;
+        SkinJoint joint;
+        cubic.joints.push_back(joint);
+        AnimationClip clip;
+        AnimationChannel ch;
+        ch.joint         = 0;
+        ch.path          = AnimationPath::Translation;
+        ch.interpolation = Interpolation::CubicSpline;
+        ch.times         = {0.f, 1.f};
+        ch.values        = {0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0};
+        clip.channels.push_back(ch);
+        clip.duration = 1.f;
+        cubic.clips.push_back(clip);
+        std::vector<JointPose> pose;
+        cubic.samplePose(&cubic.clips[0], 0.5f, pose);
+        check(near(pose[0].translation.x, 0.75f), "la curva cubica usa las tangentes");
+        cubic.samplePose(&cubic.clips[0], 1.f, pose);
+        check(near(pose[0].translation.x, 1.f), "la curva cubica termina en el ultimo valor");
+        cubic.clips[0].channels[0].values = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0};
+        cubic.samplePose(&cubic.clips[0], 0.5f, pose);
+        check(near(pose[0].translation.x, 0.5f), "con tangentes nulas la curva pasa por la mitad");
+    }
+
+    {
+        Skin wide;
+        for (int i = 0; i < 8; ++i)
+            wide.joints.push_back(SkinJoint{});
+        VertexSkin vs;
+        vs.joints[7]  = 7;
+        vs.weights[7] = 1.f;
+        wide.vertices.push_back(vs);
+        Mesh bind;
+        bind.vertices.push_back({{0.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, 0.f, 0.f});
+        std::vector<zio::math::Mat4> m(8);
+        m[7] = zio::math::Mat4::translation({0.f, 5.f, 0.f});
+        Mesh out;
+        wide.apply(bind, m, out);
+        check(near(out.vertices[0].position.y, 5.f), "la octava influencia por vertice funciona");
+    }
+
+    {
+        Skin skin;
+        SkinJoint joint;
+        skin.joints.push_back(joint);
+        std::vector<JointPose> a, b, mixed;
+        skin.restPose(a);
+        b = a;
+        b[0].translation = {2.f, 0.f, 0.f};
+        b[0].rotation    = zio::math::Quaternion::fromAxisAngle({0.f, 0.f, 1.f}, 90.f);
+        Skin::blendPoses(a, b, 0.5f, mixed);
+        check(near(mixed[0].translation.x, 1.f), "la mezcla de poses interpola la traslacion");
+        const zio::math::Quaternion expected = zio::math::Quaternion::fromAxisAngle({0.f, 0.f, 1.f}, 45.f);
+        check(near(mixed[0].rotation.z, expected.z) && near(mixed[0].rotation.w, expected.w),
+              "la mezcla de poses interpola la rotacion");
+    }
+
+    {
+        MeshNode fade;
+        fade.setMeshSource(path.string(), &error);
+        fade.playAnimation("doblar", true);
+        fade.update(0.5f);
+        check(fade.playAnimation("doblar", true, 0.4f) && fade.isBlending(), "la transicion empieza");
+        fade.update(0.2f);
+        check(fade.isBlending(), "la transicion sigue a la mitad");
+        fade.update(0.3f);
+        check(!fade.isBlending(), "la transicion termina");
     }
 
     std::filesystem::remove_all(dir);

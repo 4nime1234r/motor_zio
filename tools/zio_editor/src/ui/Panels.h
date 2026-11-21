@@ -78,6 +78,12 @@ private:
     zio::ui::ColorButton* color_   = nullptr;
     zio::ui::NumberEdit* uv_[2]    = {};
     zio::ui::CheckBox* shadow_     = nullptr;
+    zio::ui::Widget* animBox_      = nullptr;
+    zio::ui::Label* animName_      = nullptr;
+    zio::ui::Button* animPlay_     = nullptr;
+    zio::ui::CheckBox* animLoop_   = nullptr;
+    zio::ui::NumberEdit* animSpeed_ = nullptr;
+    int animIndex_ = 0;
     bool syncing_ = false;
 };
 

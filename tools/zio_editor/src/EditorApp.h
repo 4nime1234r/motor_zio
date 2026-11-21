@@ -53,6 +53,7 @@ private:
     void rememberProject();
     void openInitialProject();
     void saveLayout();
+    void previewAnimations(zio::scene3d::Node3D& node, float dt);
 
     std::vector<zio::ui::MenuItem> projectItems();
     std::vector<zio::ui::MenuItem> sceneItems();
