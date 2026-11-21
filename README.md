@@ -138,6 +138,10 @@ cmake/            Scripts y plantillas de CMake
 
 Para publicar una versión nueva: sube el número de `VERSION` en `CMakeLists.txt`, escribe las novedades en `RELEASE_NOTES.md` y haz push. El editor muestra esas notas en el aviso de actualización (menú Ayuda > Buscar actualizaciones).
 
+## Contribuir
+
+Si quieres ayudar, sigue los pasos de [CONTRIBUTING.md](CONTRIBUTING.md): crear un fork, una rama, compilar y probar, y enviar un pull request.
+
 ## Licencia
 
 Zio es de uso libre con atribución. Copyright (c) 2026 4nime1234r.
