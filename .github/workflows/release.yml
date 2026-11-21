@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+      created: ${{ steps.tag.outputs.created }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Crear y pushear el tag de versión
+        id: tag
+        shell: bash
+        run: |
+          VERSION=$(sed -nE 's/^project\(motor_zio VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt)
+          if [ -z "$VERSION" ]; then
+            echo "::error::No se pudo leer la versión de CMakeLists.txt"
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "El tag $TAG ya existe en el remoto, no hace falta crearlo ni recompilar."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Crear el borrador de release
+        if: steps.tag.outputs.created == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Ya existe una release para $TAG, se reutilizará."
+          else
+            gh release create "$TAG" --draft --title "Zio ${{ steps.tag.outputs.version }}" --generate-notes
+          fi
+
+  build:
+    needs: tag
+    if: needs.tag.outputs.created == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.tag }}
+
+      - name: Instalar el SDK de Vulkan
+        shell: pwsh
+        run: choco install vulkan-sdk -y --no-progress
+
+      - name: Configurar
+        shell: pwsh
+        run: cmake -S . -B build -A x64
+
+      - name: Compilar
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Empaquetar
+        shell: pwsh
+        run: |
+          $nombre = "Zio-${{ needs.tag.outputs.version }}-windows-x64"
+          New-Item -ItemType Directory $nombre | Out-Null
+          Copy-Item build/tools/zio_editor/Release/zio_editor.exe $nombre
+          Copy-Item LICENSE, README.md $nombre
+          Compress-Archive -Path "$nombre/*" -DestinationPath "$nombre.zip"
+
+      - name: Subir el paquete a la release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ needs.tag.outputs.tag }}" "Zio-${{ needs.tag.outputs.version }}-windows-x64.zip" --clobber
+
+  finalize:
+    needs: [tag, build]
+    if: needs.tag.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publicar la release (sacarla de estado borrador)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.tag.outputs.tag }}"
+          gh release edit "$TAG" --draft=false --repo "${{ github.repository }}"
+
+      - name: Verificar que la release publicada tenga el paquete
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.tag.outputs.tag }}"
+          ASSETS=$(gh release view "$TAG" --repo "${{ github.repository }}" --json assets -q '[.assets[].name] | join(", ")')
+          echo "Assets publicados en $TAG: $ASSETS"
+          if ! echo "$ASSETS" | grep -q "windows-x64.zip"; then
+            echo "::error::La release $TAG no tiene el paquete de Windows adjunto. Publicación incompleta, revisar manualmente en GitHub Releases."
+            exit 1
+          fi
