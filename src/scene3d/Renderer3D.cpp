@@ -77,6 +77,8 @@ struct Renderer3D::Impl
         LineMode mode;
     };
     std::vector<Line> lines;
+    std::uint32_t viewportX      = 0;
+    std::uint32_t viewportY      = 0;
     std::uint32_t viewportWidth  = 1;
     std::uint32_t viewportHeight = 1;
     float nearW                  = 0.1f;
@@ -411,7 +413,7 @@ bool Renderer3D::ensureInitialized()
 }
 
 void Renderer3D::begin(const Camera& camera, const Light& light, std::uint32_t viewportWidth,
-                       std::uint32_t viewportHeight)
+                       std::uint32_t viewportHeight, std::uint32_t viewportX, std::uint32_t viewportY)
 {
     if (!ensureInitialized())
         return;
@@ -425,6 +427,8 @@ void Renderer3D::begin(const Camera& camera, const Light& light, std::uint32_t v
     impl_->light.ambient       = std::clamp(light.ambient, 0.f, 1.f);
     impl_->light.shadowOpacity = std::clamp(light.shadowOpacity, 0.f, 1.f);
     impl_->toLight   = (-light.direction).normalized();
+    impl_->viewportX      = viewportX;
+    impl_->viewportY      = viewportY;
     impl_->viewportWidth  = std::max<std::uint32_t>(viewportWidth, 1);
     impl_->viewportHeight = std::max<std::uint32_t>(viewportHeight, 1);
     impl_->nearW          = std::max(camera.nearZ, 1e-4f);
@@ -476,6 +480,8 @@ void Renderer3D::end()
         }
     }
 
+    render::Device::instance().setViewport(s.viewportX, s.viewportY, s.viewportWidth, s.viewportHeight);
+
     for (const Command& c : s.commands)
         if (c.style.color.a >= kOpaqueAlpha)
             s.emit(c, s.opaquePipeline);
@@ -496,6 +502,8 @@ void Renderer3D::end()
 
     s.emitLines(LineMode::Overlay);
     s.flush();
+
+    render::Device::instance().resetViewport();
 
     s.commands.clear();
     s.lines.clear();

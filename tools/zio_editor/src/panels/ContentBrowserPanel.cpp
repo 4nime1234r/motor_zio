@@ -70,7 +70,7 @@ void ContentBrowserPanel::draw(EditorContext& context)
     {
         const std::string label = entry.isDirectory ? "[" + entry.displayName + "]" : entry.name;
         if (entry.isScene)
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.8f, 1.f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.506f, 0.549f, 0.973f, 1.f));
         else if (entry.isMesh)
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 1.f, 0.65f, 1.f));
         const bool clicked = ImGui::Selectable(label.c_str(), selected_ == entry.relativePath,
@@ -101,7 +101,7 @@ void ContentBrowserPanel::draw(EditorContext& context)
     }
 
     if (!listError.empty())
-        ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f), "%s", listError.c_str());
+        ImGui::TextColored(ImVec4(0.937f, 0.267f, 0.267f, 1.f), "%s", listError.c_str());
 
     switch (step)
     {

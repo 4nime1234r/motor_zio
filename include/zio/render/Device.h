@@ -42,6 +42,9 @@ public:
     void bindTexture(TextureHandle texture, std::uint32_t slot = 0);
     void draw(std::uint32_t vertexCount, std::uint32_t startVertex = 0);
 
+    void setViewport(std::uint32_t x, std::uint32_t y, std::uint32_t width, std::uint32_t height);
+    void resetViewport();
+
     bool beginShadowPass();
     void endShadowPass();
     void bindShadowMap();

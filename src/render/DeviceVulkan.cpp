@@ -1541,6 +1541,27 @@ void Device::draw(std::uint32_t vertexCount, std::uint32_t startVertex)
     vkCmdDraw(impl_->cmd, vertexCount, 1, startVertex, 0);
 }
 
+void Device::setViewport(std::uint32_t x, std::uint32_t y, std::uint32_t width, std::uint32_t height)
+{
+    if (!impl_->frameValid || impl_->inShadowPass || impl_->width == 0 || impl_->height == 0)
+        return;
+    x = (std::min)(x, impl_->width - 1);
+    y = (std::min)(y, impl_->height - 1);
+    width  = (std::max)(1u, (std::min)(width, impl_->width - x));
+    height = (std::max)(1u, (std::min)(height, impl_->height - y));
+
+    VkViewport viewport{static_cast<float>(x),     static_cast<float>(y + height), static_cast<float>(width),
+                         -static_cast<float>(height), 0.f,                            1.f};
+    VkRect2D scissor{{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y)}, {width, height}};
+    vkCmdSetViewport(impl_->cmd, 0, 1, &viewport);
+    vkCmdSetScissor(impl_->cmd, 0, 1, &scissor);
+}
+
+void Device::resetViewport()
+{
+    setViewport(0, 0, impl_->width, impl_->height);
+}
+
 bool Device::beginShadowPass()
 {
     if (!impl_->frameValid || impl_->inShadowPass || !impl_->renderPassShadow)

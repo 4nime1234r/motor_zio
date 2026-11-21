@@ -1,6 +1,7 @@
 #include "EditorApp.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_impl_win32.h>
 
 #include <vulkan/vulkan.h>
@@ -14,9 +15,11 @@
 #include <cstring>
 
 #include "EditorWindow.h"
+#include "core/Icons.h"
 #include "core/Picking.h"
 #include "core/RecentProject.h"
 #include "core/SelectionGizmo.h"
+#include "core/Theme.h"
 #include "core/ViewportGrid.h"
 #include "panels/AddObjectMenu.h"
 #include "zio/render/Device.h"
@@ -33,8 +36,8 @@ constexpr std::uint32_t kInitialHeight = 900;
 constexpr float kSidePanelWidth    = 330.f;
 constexpr float kBottomPanelHeight = 250.f;
 
-constexpr ImVec4 kErrorColor  = ImVec4(1.f, 0.4f, 0.4f, 1.f);
-constexpr ImVec4 kUpdateColor = ImVec4(0.4f, 0.85f, 0.5f, 1.f);
+constexpr ImVec4 kErrorColor  = ImVec4(0.937f, 0.267f, 0.267f, 1.f);
+constexpr ImVec4 kUpdateColor = ImVec4(0.506f, 0.549f, 0.973f, 1.f);
 
 constexpr float kSnapStep       = 0.25f;
 constexpr float kFastMultiplier = 3.f;
@@ -145,7 +148,8 @@ void EditorApp::run()
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = imguiIniPath_.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    ImGui::StyleColorsDark();
+    applyZioTheme();
+    loadEditorFonts();
 
     ImGui_ImplWin32_Init(window_->nativeHandle());
     ImGui_ImplVulkan_InitInfo initInfo{};
@@ -203,7 +207,7 @@ void EditorApp::run()
 
         ImGui::Render();
 
-        device.beginFrame(zio::render::ClearColor{0.12f, 0.12f, 0.15f, 1.f});
+        device.beginFrame(zio::render::ClearColor{0.059f, 0.067f, 0.090f, 1.f});
 
         renderScene();
 
@@ -227,7 +231,11 @@ void EditorApp::renderScene()
     if (context_.playing())
     {
         scene.update(std::min(ImGui::GetIO().DeltaTime, kMaxFrameTime));
-        renderer.begin(scene.camera(), scene.light(), window_->width(), window_->height());
+        if (viewRect_.w < 1.f || viewRect_.h < 1.f)
+            return;
+        renderer.begin(scene.camera(), scene.light(), static_cast<std::uint32_t>(viewRect_.w),
+                       static_cast<std::uint32_t>(viewRect_.h), static_cast<std::uint32_t>(viewRect_.x),
+                       static_cast<std::uint32_t>(viewRect_.y));
         scene.root().visit(renderer);
         renderer.end();
         return;
@@ -235,8 +243,13 @@ void EditorApp::renderScene()
 
     scene.update(0.f);
 
+    if (viewRect_.w < 1.f || viewRect_.h < 1.f)
+        return;
+
     const zio::scene3d::Camera camera = editorCamera_.toCamera(scene.camera());
-    renderer.begin(camera, scene.light(), window_->width(), window_->height());
+    renderer.begin(camera, scene.light(), static_cast<std::uint32_t>(viewRect_.w),
+                   static_cast<std::uint32_t>(viewRect_.h), static_cast<std::uint32_t>(viewRect_.x),
+                   static_cast<std::uint32_t>(viewRect_.y));
     drawGrid(renderer, editorCamera_.target(), editorCamera_.distance());
     scene.root().visit(renderer);
     for (const zio::scene3d::Node3D* node : context_.selection())
@@ -346,10 +359,12 @@ void EditorApp::applyGizmoDrag(const Ray& ray, bool snap)
 void EditorApp::handleViewportInput()
 {
     ImGuiIO& io        = ImGui::GetIO();
-    const float width  = static_cast<float>(window_->width());
-    const float height = static_cast<float>(window_->height());
-    if (!(width > 0.f) || !(height > 0.f))
+    const float width  = viewRect_.w;
+    const float height = viewRect_.h;
+    if (!(width > 1.f) || !(height > 1.f))
         return;
+    const float mouseX = io.MousePos.x - viewRect_.x;
+    const float mouseY = io.MousePos.y - viewRect_.y;
 
     if (context_.playing())
     {
@@ -361,7 +376,7 @@ void EditorApp::handleViewportInput()
 
     zio::scene3d::Node3D* selected    = context_.selected();
     const zio::scene3d::Camera camera = editorCamera_.toCamera(context_.scene().camera());
-    const Ray ray = makeRay(camera, width / height, 2.f * io.MousePos.x / width - 1.f, 1.f - 2.f * io.MousePos.y / height);
+    const Ray ray = makeRay(camera, width / height, 2.f * mouseX / width - 1.f, 1.f - 2.f * mouseY / height);
 
     if (dragging() && (!selected || selected != dragNode_))
         endGizmoDrag();
@@ -376,18 +391,19 @@ void EditorApp::handleViewportInput()
         return;
     }
 
-    const bool overViewport = !io.WantCaptureMouse && cameraDrag_ == CameraDrag::None;
+    const bool insideView   = viewRect_.contains(io.MousePos.x, io.MousePos.y);
+    const bool overViewport = !io.WantCaptureMouse && insideView && cameraDrag_ == CameraDrag::None;
     hoveredAxis_            = -1;
     GizmoAxes axes;
     if (selected && overViewport)
     {
         axes         = computeGizmoAxes(*selected, camera.position);
         hoveredAxis_ = gizmoMode_ == GizmoMode::Rotate
-                           ? hitTestRings(camera, width, height, axes, io.MousePos.x, io.MousePos.y)
-                           : hitTestGizmo(camera, width, height, axes, io.MousePos.x, io.MousePos.y);
+                           ? hitTestRings(camera, width, height, axes, mouseX, mouseY)
+                           : hitTestGizmo(camera, width, height, axes, mouseX, mouseY);
     }
 
-    if (!io.WantCaptureMouse && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+    if (!io.WantCaptureMouse && insideView && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
     {
         if (!(hoveredAxis_ >= 0 && beginGizmoDrag(*selected, axes, hoveredAxis_, ray)))
         {
@@ -420,14 +436,14 @@ void EditorApp::drawViewportContextMenu()
     {
         openViewportMenu_ = false;
         ImGuiIO& io       = ImGui::GetIO();
-        const float width  = static_cast<float>(window_->width());
-        const float height = static_cast<float>(window_->height());
-        if (width > 0.f && height > 0.f && !context_.hasPending() &&
+        const float width  = viewRect_.w;
+        const float height = viewRect_.h;
+        if (width > 1.f && height > 1.f && !context_.hasPending() &&
             !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
         {
             const zio::scene3d::Camera camera = editorCamera_.toCamera(context_.scene().camera());
-            const Ray ray = makeRay(camera, width / height, 2.f * io.MousePos.x / width - 1.f,
-                                    1.f - 2.f * io.MousePos.y / height);
+            const Ray ray = makeRay(camera, width / height, 2.f * (io.MousePos.x - viewRect_.x) / width - 1.f,
+                                    1.f - 2.f * (io.MousePos.y - viewRect_.y) / height);
             if (zio::scene3d::Node3D* hit = pickNode(context_.scene().root(), ray))
                 context_.select(hit);
             ImGui::OpenPopup(kPopupId);
@@ -574,7 +590,7 @@ void EditorApp::updateViewportCamera()
     }
 
     ImGuiIO& io       = ImGui::GetIO();
-    const bool overUi = io.WantCaptureMouse;
+    const bool overUi = io.WantCaptureMouse || !viewRect_.contains(io.MousePos.x, io.MousePos.y);
 
     if (!overUi && cameraDrag_ == CameraDrag::None)
     {
@@ -628,63 +644,179 @@ void EditorApp::saveCurrentScene()
 
 void EditorApp::drawMenuBar()
 {
-    if (ImGui::BeginMenuBar())
+    if (!ImGui::BeginMainMenuBar())
+        return;
+
+    const bool projectOpen = context_.project().isOpen();
+
+    if (ImGui::BeginMenu("Proyecto"))
     {
-        const bool projectOpen = context_.project().isOpen();
+        if (ImGui::MenuItem("Nuevo proyecto..."))
+            wantNewProjectPopup_ = true;
+        if (ImGui::MenuItem("Abrir proyecto..."))
+            wantOpenProjectPopup_ = true;
+        ImGui::EndMenu();
+    }
 
-        if (ImGui::BeginMenu("Proyecto"))
+    if (ImGui::BeginMenu("Escena"))
+    {
+        if (ImGui::MenuItem("Guardar", "Ctrl+S", false, projectOpen && !context_.playing()))
+            saveCurrentScene();
+        if (ImGui::MenuItem("Guardar como...", nullptr, false, projectOpen && !context_.playing()))
+            wantSaveAsPopup_ = true;
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Editar"))
+    {
+        drawEditItems();
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Objeto"))
+    {
+        drawAddObjectItems(context_);
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Ver"))
+    {
+        if (ImGui::MenuItem("Restablecer diseño"))
+            resetLayout_ = true;
+        ImGui::EndMenu();
+    }
+
+    const float size       = ImGui::GetFrameHeight() - 4.f;
+    const float groupWidth = size * 2.f + ImGui::GetStyle().ItemSpacing.x;
+    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - groupWidth) * 0.5f);
+
+    ImGui::BeginDisabled(!projectOpen);
+    if (iconButton("##jugar", Icon::Play, context_.playing(), "Jugar (F5)", size) && !context_.playing())
+        togglePlay();
+    ImGui::SameLine();
+    if (iconButton("##detener", Icon::Stop, context_.playing(), "Detener (F5)", size) && context_.playing())
+        togglePlay();
+    ImGui::EndDisabled();
+
+    ImGui::EndMainMenuBar();
+}
+
+void EditorApp::drawStatusBar(float frameTimeMs)
+{
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
+                                        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDocking;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.f, 4.f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_MenuBarBg));
+    const bool open = ImGui::BeginViewportSideBar("##barra_estado", viewport, ImGuiDir_Down,
+                                                  ImGui::GetFrameHeight() - 2.f, kFlags);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+    if (!open)
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::AlignTextToFramePadding();
+    if (context_.project().isOpen())
+    {
+        const std::string& scene = context_.currentScene();
+        ImGui::TextDisabled("%s", context_.project().name().c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("/");
+        ImGui::SameLine();
+        ImGui::TextUnformatted(scene.empty() ? "(sin escena)" : scene.c_str());
+        if (context_.isDirty())
         {
-            if (ImGui::MenuItem("Nuevo proyecto..."))
-                wantNewProjectPopup_ = true;
-            if (ImGui::MenuItem("Abrir proyecto..."))
-                wantOpenProjectPopup_ = true;
-            ImGui::EndMenu();
+            ImGui::SameLine(0.f, 4.f);
+            ImGui::TextColored(kUpdateColor, "*");
         }
-
-        if (ImGui::BeginMenu("Escena"))
-        {
-            if (ImGui::MenuItem("Guardar", "Ctrl+S", false, projectOpen && !context_.playing()))
-                saveCurrentScene();
-            if (ImGui::MenuItem("Guardar como...", nullptr, false, projectOpen && !context_.playing()))
-                wantSaveAsPopup_ = true;
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Editar"))
-        {
-            drawEditItems();
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Objeto"))
-        {
-            drawAddObjectItems(context_);
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::MenuItem(context_.playing() ? "Detener" : "Jugar", "F5", false, projectOpen))
-            togglePlay();
-
-        if (projectOpen)
-        {
-            const std::string& scene = context_.currentScene();
-            ImGui::TextDisabled("  |  %s  |  %s%s", context_.project().name().c_str(),
-                                scene.empty() ? "(sin escena)" : scene.c_str(), context_.isDirty() ? " *" : "");
-        }
-        else
-        {
-            ImGui::TextDisabled("  |  sin proyecto");
-        }
-
-        const std::string& error = context_.lastError().empty() ? statusError_ : context_.lastError();
-        if (!error.empty())
+        if (context_.selection().size() > 1)
         {
             ImGui::SameLine();
-            ImGui::TextColored(kErrorColor, "  %s", error.c_str());
+            ImGui::TextDisabled("  %d seleccionados", static_cast<int>(context_.selection().size()));
         }
-        drawUpdateStatus();
-        ImGui::EndMenuBar();
     }
+    else
+    {
+        ImGui::TextDisabled("Sin proyecto: crea o abre uno desde el menú Proyecto");
+    }
+
+    const std::string& error = context_.lastError().empty() ? statusError_ : context_.lastError();
+    if (!error.empty())
+    {
+        ImGui::SameLine();
+        ImGui::TextColored(kErrorColor, "   %s", error.c_str());
+    }
+    drawUpdateStatus();
+
+    char right[96];
+    const float fps = frameTimeMs > 0.f ? 1000.f / frameTimeMs : 0.f;
+    std::snprintf(right, sizeof(right), "%.0f FPS    Zio v%s", fps, ZIO_VERSION);
+    const float rightWidth = ImGui::CalcTextSize(right).x;
+    ImGui::SameLine(ImGui::GetWindowWidth() - rightWidth - ImGui::GetStyle().WindowPadding.x);
+    ImGui::TextDisabled("%s", right);
+
+    ImGui::End();
+}
+
+void EditorApp::drawViewportToolbar()
+{
+    if (context_.playing() || viewRect_.w < 1.f || viewRect_.h < 1.f)
+        return;
+
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
+                                        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing |
+                                        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDocking |
+                                        ImGuiWindowFlags_NoMove;
+
+    ImGui::SetNextWindowPos(ImVec2(viewRect_.x + 12.f, viewRect_.y + 12.f));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.f, 6.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 9.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.f, 4.f));
+    const bool open = ImGui::Begin("##herramientas_visor", nullptr, kFlags);
+    ImGui::PopStyleVar(3);
+    if (open)
+    {
+        const float size = ImGui::GetFrameHeight() + 4.f;
+        if (iconButton("##mover", Icon::Move, gizmoMode_ == GizmoMode::Move, "Mover (1)", size))
+            gizmoMode_ = GizmoMode::Move;
+        ImGui::SameLine();
+        if (iconButton("##rotar", Icon::Rotate, gizmoMode_ == GizmoMode::Rotate, "Rotar (2)", size))
+            gizmoMode_ = GizmoMode::Rotate;
+        ImGui::SameLine();
+        if (iconButton("##escalar", Icon::Scale, gizmoMode_ == GizmoMode::Scale, "Escalar (3)", size))
+            gizmoMode_ = GizmoMode::Scale;
+        ImGui::SameLine(0.f, 10.f);
+        ImGui::BeginDisabled(context_.selected() == nullptr);
+        if (iconButton("##enfocar", Icon::Focus, false, "Enfocar la selección (F)", size))
+            focusSelection();
+        ImGui::EndDisabled();
+    }
+    ImGui::End();
+}
+
+void EditorApp::buildDefaultLayout(std::uint32_t dockspaceId, float width, float height)
+{
+    const ImGuiID root = dockspaceId;
+    ImGui::DockBuilderRemoveNode(root);
+    ImGui::DockBuilderAddNode(root, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(root, ImVec2(width, height));
+
+    ImGuiID center = root;
+    ImGuiID left   = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
+    ImGuiID right  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, nullptr, &center);
+    ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.24f, nullptr, &center);
+    ImGuiID leftBottom = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.42f, nullptr, &left);
+
+    ImGui::DockBuilderDockWindow("Jerarquía", left);
+    ImGui::DockBuilderDockWindow("Contenido", leftBottom);
+    ImGui::DockBuilderDockWindow("Inspector", right);
+    ImGui::DockBuilderDockWindow("Rendimiento", bottom);
+    ImGui::DockBuilderFinish(root);
 }
 
 void EditorApp::drawUpdateStatus()
@@ -897,20 +1029,6 @@ void EditorApp::drawSceneSavePopups()
 void EditorApp::drawUi(float frameTimeMs)
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
-    ImGui::SetNextWindowViewport(viewport->ID);
-
-    constexpr ImGuiWindowFlags kHostFlags =
-        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
-        ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoBackground;
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
-    ImGui::Begin("ZioEditorDockHost", nullptr, kHostFlags);
-    ImGui::PopStyleVar(3);
 
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S) && !context_.hasPending())
         saveCurrentScene();
@@ -918,32 +1036,30 @@ void EditorApp::drawUi(float frameTimeMs)
         togglePlay();
 
     drawMenuBar();
+    drawStatusBar(frameTimeMs);
+
+    const ImGuiID dockspaceId = viewport->ID;
+    if (resetLayout_ || ImGui::DockBuilderGetNode(dockspaceId) == nullptr)
+    {
+        buildDefaultLayout(dockspaceId, viewport->WorkSize.x, viewport->WorkSize.y);
+        resetLayout_ = false;
+    }
+    ImGui::DockSpaceOverViewport(dockspaceId, viewport,
+                                 ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingOverCentralNode);
+
+    viewRect_ = ViewRect{viewport->WorkPos.x, viewport->WorkPos.y, viewport->WorkSize.x, viewport->WorkSize.y};
+    if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspaceId))
+        viewRect_ = ViewRect{central->Pos.x, central->Pos.y, central->Size.x, central->Size.y};
+
     drawProjectPopups();
     drawSceneSavePopups();
 
-    const ImGuiID dockspaceId = ImGui::GetID("ZioEditorDockspace");
-    ImGui::DockSpace(dockspaceId, ImVec2(0.f, 0.f), ImGuiDockNodeFlags_PassthruCentralNode);
-    ImGui::End();
-
-    const float menuHeight = ImGui::GetFrameHeight();
-    const ImVec2 origin    = ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + menuHeight);
-    const ImVec2 size      = ImVec2(viewport->WorkSize.x, viewport->WorkSize.y - menuHeight);
-    const float sideH      = size.y - kBottomPanelHeight;
-
-    ImGui::SetNextWindowPos(origin, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(kSidePanelWidth, sideH), ImGuiCond_FirstUseEver);
     hierarchyPanel_.draw(context_);
-
-    ImGui::SetNextWindowPos(ImVec2(origin.x + size.x - kSidePanelWidth, origin.y), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(kSidePanelWidth, sideH), ImGuiCond_FirstUseEver);
     inspectorPanel_.draw(context_);
-
-    ImGui::SetNextWindowPos(ImVec2(origin.x, origin.y + sideH), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(size.x, kBottomPanelHeight), ImGuiCond_FirstUseEver);
     contentBrowserPanel_.draw(context_);
-
-    ImGui::SetNextWindowPos(ImVec2(origin.x + kSidePanelWidth + 10.f, origin.y + 10.f), ImGuiCond_FirstUseEver);
     diagnosticsPanel_.draw(frameTimeMs);
+
+    drawViewportToolbar();
 }
 
 }

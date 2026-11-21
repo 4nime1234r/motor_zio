@@ -52,7 +52,8 @@ public:
 
     bool ensureInitialized();
 
-    void begin(const Camera& camera, const Light& light, std::uint32_t viewportWidth, std::uint32_t viewportHeight);
+    void begin(const Camera& camera, const Light& light, std::uint32_t viewportWidth, std::uint32_t viewportHeight,
+               std::uint32_t viewportX = 0, std::uint32_t viewportY = 0);
     void drawMesh(const Mesh& mesh, const math::Mat4& world, const MeshStyle& style);
     void drawMesh(const Mesh& mesh, const math::Mat4& world, renderer::Color color)
     {

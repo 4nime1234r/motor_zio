@@ -32,6 +32,8 @@ add_executable(zio_editor
     src/core/Picking.cpp
     src/core/SelectionGizmo.cpp
     src/core/ViewportGrid.cpp
+    src/core/Theme.cpp
+    src/core/Icons.cpp
     src/project/ProjectManager.cpp
     src/panels/AddObjectMenu.cpp
     src/panels/ContentBrowserModel.cpp

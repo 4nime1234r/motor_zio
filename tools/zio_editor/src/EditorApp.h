@@ -21,6 +21,16 @@ namespace zio_editor
 
 class EditorWindow;
 
+struct ViewRect
+{
+    float x = 0.f;
+    float y = 0.f;
+    float w = 1.f;
+    float h = 1.f;
+
+    bool contains(float px, float py) const { return px >= x && py >= y && px < x + w && py < y + h; }
+};
+
 class EditorApp
 {
 public:
@@ -45,6 +55,9 @@ private:
     void drawUi(float frameTimeMs);
     void drawMenuBar();
     void drawUpdateStatus();
+    void drawStatusBar(float frameTimeMs);
+    void drawViewportToolbar();
+    void buildDefaultLayout(std::uint32_t dockspaceId, float width, float height);
     void drawProjectPopups();
     void drawSceneSavePopups();
     void saveCurrentScene();
@@ -93,6 +106,8 @@ private:
 
     Updater updater_;
     bool restartAfterClose_ = false;
+    ViewRect viewRect_;
+    bool resetLayout_       = false;
 
     std::string imguiIniPath_;
     std::filesystem::path recentFile_;
