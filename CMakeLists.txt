@@ -52,6 +52,7 @@ add_library(engine STATIC
     src/scene2d/Node.cpp
     src/scene2d/Scene2D.cpp
     src/scene2d/SceneIO.cpp
+    src/scene3d/Gltf.cpp
     src/scene3d/Mesh.cpp
     src/scene3d/Node3D.cpp
     src/scene3d/Renderer3D.cpp

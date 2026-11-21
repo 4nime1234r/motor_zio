@@ -353,7 +353,14 @@ std::string EditorContext::uniqueName(const zio::scene3d::Node3D& parent, const 
 
 std::vector<std::string> EditorContext::meshAssets() const
 {
-    return project_.listFiles("assets/models", ".obj");
+    std::vector<std::string> out;
+    for (const char* ext : {".obj", ".gltf", ".glb"})
+    {
+        auto part = project_.listFiles("assets/models", ext);
+        out.insert(out.end(), part.begin(), part.end());
+    }
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 zio::scene3d::Node3D* EditorContext::addNode(NewNodeKind kind, std::string_view meshPath, std::string* error)
@@ -395,7 +402,7 @@ zio::scene3d::Node3D* EditorContext::addNode(NewNodeKind kind, std::string_view 
         if (!absolute)
             return reject("Ruta inválida o fuera del proyecto: " + std::string(meshPath));
         if (!ProjectManager::isMeshFile(*absolute))
-            return reject("No es una malla (se esperaba .obj): " + std::string(meshPath));
+            return reject("No es una malla (se esperaba .obj, .gltf o .glb): " + std::string(meshPath));
         std::error_code ec;
         if (!fs::is_regular_file(*absolute, ec))
             return reject("No existe la malla: " + std::string(meshPath));

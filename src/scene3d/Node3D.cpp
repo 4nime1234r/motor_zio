@@ -59,6 +59,9 @@ bool MeshNode::setMeshSource(std::string source, std::string* error)
         return false;
     mesh_       = std::move(mesh);
     meshSource_ = std::move(source);
+    color_      = renderer::Color{mesh_->baseColor[0], mesh_->baseColor[1], mesh_->baseColor[2], mesh_->baseColor[3]};
+    if (!mesh_->texturePath.empty())
+        setTexturePath(mesh_->texturePath);
     return true;
 }
 

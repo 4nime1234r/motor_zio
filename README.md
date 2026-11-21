@@ -15,7 +15,7 @@ Es un proyecto en desarrollo activo. La versión actual es la **0.2.0**.
 - Escenas guardadas y cargadas desde archivos JSON.
 
 **Gráficos 3D**
-- Carga de modelos `.obj` con coordenadas de textura.
+- Carga de modelos `.obj`, `.gltf` y `.glb` (posiciones, normales, coordenadas de textura, transformaciones de nodos, color base y textura base externa del material).
 - Escenas con jerarquía de nodos y cámara.
 - Iluminación por píxel y sombras reales con mapa de sombras suavizado.
 - Materiales transparentes ordenados correctamente.
@@ -36,7 +36,7 @@ El editor vive en `tools/zio_editor` y está hecho con `zio::ui`, la librería d
 
 - Crear y abrir proyectos. Cada proyecto es una carpeta con `project.zio` y subcarpetas de modelos, texturas y escenas.
 - Abrir, guardar y guardar como escenas 3D, con aviso si hay cambios sin guardar.
-- Añadir nodos vacíos, cubos y modelos `.obj`.
+- Añadir nodos vacíos, cubos y modelos `.obj`, `.gltf` y `.glb`.
 - Panel de archivos del proyecto, con árbol de carpetas y cuadrícula de iconos por tipo (escenas, modelos, texturas, audio y scripts de C++, C# y Lua).
 - Visor 3D con cuadrícula, selección por clic y gizmos para mover, rotar y escalar.
 - Selección múltiple, copiar, pegar y duplicar.
@@ -119,7 +119,7 @@ La carpeta `projects/` contiene ejemplos completos, entre ellos `Prueba3D`, una 
 ## Limitaciones actuales
 
 - No hay animación de huesos ni de sprites.
-- Solo se leen modelos `.obj`, sin materiales avanzados.
+- De los modelos glTF solo se usa el primer material (color base y textura externa); no hay PBR completo, huesos ni texturas incrustadas.
 - No hay scripting: el juego se escribe en C++.
 - Solo funciona en Windows.
 

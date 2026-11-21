@@ -1,8 +1,13 @@
 #include "zio/scene3d/Mesh.h"
 
+#include <algorithm>
+#include <cctype>
 #include <charconv>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
+
+#include "scene3d/Gltf.h"
 
 namespace zio::scene3d
 {
@@ -67,6 +72,11 @@ std::shared_ptr<Mesh> Mesh::cube(float size)
             mesh->vertices.push_back({k.p, f.n, k.u, k.v});
     }
     return mesh;
+}
+
+std::shared_ptr<Mesh> Mesh::loadGltf(const std::string& path, std::string* error)
+{
+    return zio::scene3d::loadGltf(path, error);
 }
 
 std::shared_ptr<Mesh> Mesh::loadObj(const std::string& path, std::string* error)
@@ -201,7 +211,12 @@ std::shared_ptr<Mesh> Mesh::fromSource(std::string_view source, std::string* err
         setError(error, "empty mesh source");
         return nullptr;
     }
-    return loadObj(std::string(source), error);
+    const std::string path(source);
+    std::string ext = std::filesystem::path(path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (ext == ".gltf" || ext == ".glb")
+        return loadGltf(path, error);
+    return loadObj(path, error);
 }
 
 }

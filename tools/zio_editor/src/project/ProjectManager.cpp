@@ -151,7 +151,8 @@ bool ProjectManager::isSceneFile(const fs::path& path)
 
 bool ProjectManager::isMeshFile(const fs::path& path)
 {
-    return toUpper(path.extension().string()) == ".OBJ";
+    const std::string ext = toUpper(path.extension().string());
+    return ext == ".OBJ" || ext == ".GLTF" || ext == ".GLB";
 }
 
 std::vector<std::string> ProjectManager::listFiles(std::string_view relativeDir, std::string_view extension) const

@@ -23,8 +23,12 @@ class ZIO_API Mesh
 {
 public:
     std::vector<Vertex3D> vertices;
+    float baseColor[4] = {1.f, 1.f, 1.f, 1.f};
+    std::string texturePath;
 
     static std::shared_ptr<Mesh> cube(float size = 1.f);
+
+    static std::shared_ptr<Mesh> loadGltf(const std::string& path, std::string* error = nullptr);
 
     static std::shared_ptr<Mesh> loadObj(const std::string& path, std::string* error = nullptr);
 

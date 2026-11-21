@@ -275,11 +275,11 @@ std::vector<MenuItem> EditorApp::addObjectItems()
         meshes.push_back(MenuItem::item(mesh, [this, mesh]() { context_.addNode(NewNodeKind::Mesh, mesh); }));
     if (meshes.empty())
     {
-        MenuItem none = MenuItem::item("No hay .obj en assets/models");
+        MenuItem none = MenuItem::item("No hay mallas en assets/models");
         none.enabled  = false;
         meshes.push_back(std::move(none));
     }
-    MenuItem submenu = MenuItem::submenuItem("Malla (.obj)", std::move(meshes));
+    MenuItem submenu = MenuItem::submenuItem("Malla (.obj, .gltf, .glb)", std::move(meshes));
     submenu.enabled  = enabled;
     items.push_back(std::move(submenu));
     return items;
