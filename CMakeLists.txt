@@ -62,6 +62,7 @@ add_library(engine STATIC
     src/ui/Containers.cpp
     src/ui/Controls.cpp
     src/ui/Core.cpp
+    src/ui/Dock.cpp
     src/ui/EngineHost.cpp
     src/ui/Menus.cpp
     src/ui/GdiFont.cpp

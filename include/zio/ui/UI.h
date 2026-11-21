@@ -4,6 +4,7 @@
 #include "zio/ui/Containers.h"
 #include "zio/ui/Context.h"
 #include "zio/ui/Controls.h"
+#include "zio/ui/Dock.h"
 #include "zio/ui/EngineHost.h"
 #include "zio/ui/Font.h"
 #include "zio/ui/Menus.h"
