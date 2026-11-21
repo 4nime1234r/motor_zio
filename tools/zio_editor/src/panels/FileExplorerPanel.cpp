@@ -27,9 +27,11 @@ enum class FileKind
     Other
 };
 
-constexpr float kCellWidth  = 96.f;
-constexpr float kIconSize   = 52.f;
-constexpr int kMaxTreeDepth = 8;
+constexpr float kCellWidth      = 96.f;
+constexpr float kGridIconSize   = 52.f;
+constexpr float kListIconSize   = 20.f;
+constexpr float kWideThreshold  = 620.f;
+constexpr int kMaxTreeDepth     = 8;
 
 std::string lowerCase(std::string text)
 {
@@ -127,44 +129,51 @@ std::string kindLabel(FileKind kind, const std::string& ext)
     return label;
 }
 
-void drawIcon(ImDrawList* list, ImVec2 origin, FileKind kind, const std::string& ext)
+void drawIcon(ImDrawList* list, ImVec2 origin, float size, FileKind kind, const std::string& ext)
 {
-    const ImVec4 base  = kindColor(kind);
-    const ImU32 line   = ImGui::GetColorU32(base);
-    const ImU32 fill   = ImGui::GetColorU32(ImVec4(base.x, base.y, base.z, 0.16f));
-    const ImVec2 min   = origin;
-    const ImVec2 max   = ImVec2(origin.x + kIconSize, origin.y + kIconSize);
+    const ImVec4 base = kindColor(kind);
+    const ImU32 line  = ImGui::GetColorU32(base);
+    const ImU32 fill  = ImGui::GetColorU32(ImVec4(base.x, base.y, base.z, 0.16f));
+    const ImVec2 min  = origin;
+    const ImVec2 max  = ImVec2(origin.x + size, origin.y + size);
+    const bool small  = size < 30.f;
 
     if (kind == FileKind::Folder)
     {
-        const float tabWidth = kIconSize * 0.42f;
-        const float tabTop   = min.y + kIconSize * 0.12f;
-        const float bodyTop  = min.y + kIconSize * 0.26f;
-        list->AddRectFilled(ImVec2(min.x, tabTop), ImVec2(min.x + tabWidth, bodyTop + 6.f), line, 4.f);
-        list->AddRectFilled(ImVec2(min.x, bodyTop), ImVec2(max.x, max.y - kIconSize * 0.08f), line, 5.f);
-        list->AddRectFilled(ImVec2(min.x, bodyTop + 5.f), ImVec2(max.x, max.y - kIconSize * 0.08f),
-                            ImGui::GetColorU32(ImVec4(base.x * 0.85f, base.y * 0.85f, base.z * 0.85f, 1.f)), 5.f);
+        const float tabWidth = size * 0.42f;
+        const float tabTop   = min.y + size * 0.12f;
+        const float bodyTop  = min.y + size * 0.26f;
+        const float round    = small ? 2.f : 5.f;
+        list->AddRectFilled(ImVec2(min.x, tabTop), ImVec2(min.x + tabWidth, bodyTop + round), line, round);
+        list->AddRectFilled(ImVec2(min.x, bodyTop), ImVec2(max.x, max.y - size * 0.08f), line, round);
+        if (!small)
+            list->AddRectFilled(ImVec2(min.x, bodyTop + 5.f), ImVec2(max.x, max.y - size * 0.08f),
+                                ImGui::GetColorU32(ImVec4(base.x * 0.85f, base.y * 0.85f, base.z * 0.85f, 1.f)), round);
         return;
     }
 
-    const float inset = kIconSize * 0.14f;
+    const float inset = size * 0.14f;
     const ImVec2 pageMin(min.x + inset, min.y);
     const ImVec2 pageMax(max.x - inset, max.y);
-    const float fold = kIconSize * 0.24f;
+    const float fold  = size * 0.24f;
+    const float round = small ? 2.f : 6.f;
 
-    list->AddRectFilled(pageMin, pageMax, fill, 6.f);
-    list->AddRect(pageMin, pageMax, line, 6.f, ImDrawFlags_None, 1.6f);
+    list->AddRectFilled(pageMin, pageMax, fill, round);
+    list->AddRect(pageMin, pageMax, line, round, ImDrawFlags_None, small ? 1.2f : 1.6f);
     list->AddTriangleFilled(ImVec2(pageMax.x - fold, pageMin.y), ImVec2(pageMax.x, pageMin.y + fold),
                             ImVec2(pageMax.x - fold, pageMin.y + fold), line);
+
+    if (small)
+        return;
 
     const std::string label = kindLabel(kind, ext);
     if (!label.empty())
     {
         const float fontSize = ImGui::GetFontSize() * 0.95f;
-        const ImVec2 size    = ImGui::GetFont()->CalcTextSizeA(fontSize, 1000.f, 0.f, label.c_str());
+        const ImVec2 textSize = ImGui::GetFont()->CalcTextSizeA(fontSize, 1000.f, 0.f, label.c_str());
         list->AddText(ImGui::GetFont(), fontSize,
-                      ImVec2((pageMin.x + pageMax.x - size.x) * 0.5f, min.y + kIconSize * 0.56f - size.y * 0.5f), line,
-                      label.c_str());
+                      ImVec2((pageMin.x + pageMax.x - textSize.x) * 0.5f, min.y + size * 0.56f - textSize.y * 0.5f),
+                      line, label.c_str());
     }
 }
 
@@ -200,11 +209,11 @@ void FileExplorerPanel::scan(const ProjectManager& project, FolderNode& node, in
         if (!it->is_directory(entryEc))
             continue;
         FolderNode child;
-        child.name         = it->path().filename().string();
-        child.relativePath = node.relativePath + "/" + child.name;
-        child.display      = ContentBrowserModel::displayName(node.relativePath, child.name);
+        child.name = it->path().filename().string();
         if (!child.name.empty() && child.name.front() == '.')
             continue;
+        child.relativePath = node.relativePath + "/" + child.name;
+        child.display      = ContentBrowserModel::displayName(node.relativePath, child.name);
         scan(project, child, depth + 1);
         node.children.push_back(std::move(child));
     }
@@ -276,6 +285,13 @@ void FileExplorerPanel::drawFiles(EditorContext& context)
     if (!gotoDir.empty() && model_.goTo(project, gotoDir))
         selected_.clear();
 
+    const char* modeLabel = listView_ ? "Iconos" : "Lista";
+    const float modeWidth = ImGui::CalcTextSize(modeLabel).x + ImGui::GetStyle().FramePadding.x * 2.f;
+    ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - modeWidth -
+                                                         ImGui::GetStyle().WindowPadding.x));
+    if (ImGui::SmallButton(modeLabel))
+        listView_ = !listView_;
+
     ImGui::Separator();
 
     std::string listError;
@@ -295,57 +311,92 @@ void FileExplorerPanel::drawFiles(EditorContext& context)
     Step step = Step::None;
     std::string stepTarget;
 
-    ImDrawList* list     = ImGui::GetWindowDrawList();
-    const float avail    = ImGui::GetContentRegionAvail().x;
-    const int columns    = std::max(1, static_cast<int>(avail / kCellWidth));
-    const float cellHeight = kIconSize + ImGui::GetTextLineHeight() * 2.f + 14.f;
-
-    for (std::size_t i = 0; i < entries.size(); ++i)
-    {
-        const auto& entry         = entries[i];
-        const std::string ext     = extensionOf(entry.name);
-        const FileKind kind       = classify(entry, ext);
-
-        ImGui::PushID(static_cast<int>(i));
-        const ImVec2 cell = ImGui::GetCursorScreenPos();
-        const bool clicked = ImGui::Selectable("##entrada", selected_ == entry.relativePath,
-                                               ImGuiSelectableFlags_AllowDoubleClick, ImVec2(kCellWidth - 6.f, cellHeight));
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s", entry.displayName.c_str());
-
-        drawIcon(list, ImVec2(cell.x + (kCellWidth - 6.f - kIconSize) * 0.5f, cell.y + 5.f), kind, ext);
-
-        std::string label = fitLabel(entry.displayName, kCellWidth - 14.f);
-        const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
-        list->AddText(ImVec2(cell.x + (kCellWidth - 6.f - textSize.x) * 0.5f, cell.y + kIconSize + 10.f),
-                      ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
-        ImGui::PopID();
-
-        if (clicked)
+    auto activate = [&](const ContentBrowserModel::Entry& entry) {
+        if (entry.isDirectory)
         {
-            selected_ = entry.relativePath;
-            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+            step       = Step::Enter;
+            stepTarget = entry.name;
+        }
+        else if (entry.isScene)
+        {
+            step       = Step::OpenScene;
+            stepTarget = entry.relativePath;
+        }
+        else if (entry.isMesh)
+        {
+            step       = Step::AddMesh;
+            stepTarget = entry.relativePath;
+        }
+    };
+
+    ImDrawList* list = ImGui::GetWindowDrawList();
+
+    if (listView_)
+    {
+        const float rowHeight = std::max(ImGui::GetFrameHeight(), kListIconSize + 4.f);
+        for (std::size_t i = 0; i < entries.size(); ++i)
+        {
+            const auto& entry   = entries[i];
+            const std::string ext = extensionOf(entry.name);
+            const FileKind kind = classify(entry, ext);
+
+            ImGui::PushID(static_cast<int>(i));
+            const ImVec2 row = ImGui::GetCursorScreenPos();
+            const bool clicked = ImGui::Selectable("##fila", selected_ == entry.relativePath,
+                                                   ImGuiSelectableFlags_AllowDoubleClick,
+                                                   ImVec2(0.f, rowHeight));
+            drawIcon(list, ImVec2(row.x + 4.f, row.y + (rowHeight - kListIconSize) * 0.5f), kListIconSize, kind, ext);
+            list->AddText(ImVec2(row.x + 4.f + kListIconSize + 8.f, row.y + (rowHeight - ImGui::GetFontSize()) * 0.5f),
+                          ImGui::GetColorU32(ImGuiCol_Text), entry.displayName.c_str());
+            ImGui::PopID();
+
+            if (clicked)
             {
-                if (entry.isDirectory)
-                {
-                    step       = Step::Enter;
-                    stepTarget = entry.name;
-                }
-                else if (entry.isScene)
-                {
-                    step       = Step::OpenScene;
-                    stepTarget = entry.relativePath;
-                }
-                else if (entry.isMesh)
-                {
-                    step       = Step::AddMesh;
-                    stepTarget = entry.relativePath;
-                }
+                selected_ = entry.relativePath;
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                    activate(entry);
             }
         }
+    }
+    else
+    {
+        const float avail      = ImGui::GetContentRegionAvail().x;
+        const int columns      = std::max(1, static_cast<int>(avail / kCellWidth));
+        const float cellHeight = kGridIconSize + ImGui::GetTextLineHeight() + 20.f;
 
-        if ((static_cast<int>(i) + 1) % columns != 0 && i + 1 < entries.size())
-            ImGui::SameLine();
+        for (std::size_t i = 0; i < entries.size(); ++i)
+        {
+            const auto& entry   = entries[i];
+            const std::string ext = extensionOf(entry.name);
+            const FileKind kind = classify(entry, ext);
+
+            ImGui::PushID(static_cast<int>(i));
+            const ImVec2 cell  = ImGui::GetCursorScreenPos();
+            const bool clicked = ImGui::Selectable("##entrada", selected_ == entry.relativePath,
+                                                   ImGuiSelectableFlags_AllowDoubleClick,
+                                                   ImVec2(kCellWidth - 6.f, cellHeight));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", entry.displayName.c_str());
+
+            drawIcon(list, ImVec2(cell.x + (kCellWidth - 6.f - kGridIconSize) * 0.5f, cell.y + 5.f), kGridIconSize,
+                     kind, ext);
+
+            const std::string label = fitLabel(entry.displayName, kCellWidth - 14.f);
+            const ImVec2 textSize   = ImGui::CalcTextSize(label.c_str());
+            list->AddText(ImVec2(cell.x + (kCellWidth - 6.f - textSize.x) * 0.5f, cell.y + kGridIconSize + 10.f),
+                          ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
+            ImGui::PopID();
+
+            if (clicked)
+            {
+                selected_ = entry.relativePath;
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                    activate(entry);
+            }
+
+            if ((static_cast<int>(i) + 1) % columns != 0 && i + 1 < entries.size())
+                ImGui::SameLine();
+        }
     }
 
     switch (step)
@@ -388,15 +439,32 @@ void FileExplorerPanel::draw(EditorContext& context)
     if (ImGui::GetTime() - lastScan_ > 1.5)
         rescan(project);
 
-    ImGui::BeginChild("##carpetas", ImVec2(treeWidth_, 0.f), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
-    drawTree(project, tree_);
-    treeWidth_ = ImGui::GetWindowWidth();
-    ImGui::EndChild();
+    const bool wide = ImGui::GetContentRegionAvail().x >= kWideThreshold;
+    if (wide)
+    {
+        ImGui::BeginChild("##carpetas", ImVec2(treeWidth_, 0.f), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
+        drawTree(project, tree_);
+        treeWidth_ = ImGui::GetWindowWidth();
+        ImGui::EndChild();
 
-    ImGui::SameLine();
-    ImGui::BeginChild("##archivos", ImVec2(0.f, 0.f), ImGuiChildFlags_None);
-    drawFiles(context);
-    ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("##archivos", ImVec2(0.f, 0.f), ImGuiChildFlags_None);
+        drawFiles(context);
+        ImGui::EndChild();
+    }
+    else
+    {
+        const float maxTree = std::max(60.f, ImGui::GetContentRegionAvail().y - 80.f);
+        treeHeight_         = std::clamp(treeHeight_, 60.f, maxTree);
+        ImGui::BeginChild("##carpetas", ImVec2(0.f, treeHeight_), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeY);
+        drawTree(project, tree_);
+        treeHeight_ = ImGui::GetWindowHeight();
+        ImGui::EndChild();
+
+        ImGui::BeginChild("##archivos", ImVec2(0.f, 0.f), ImGuiChildFlags_None);
+        drawFiles(context);
+        ImGui::EndChild();
+    }
 
     ImGui::End();
 }

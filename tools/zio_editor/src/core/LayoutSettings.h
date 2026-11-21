@@ -15,17 +15,15 @@ enum class PanelSide
 enum PanelId
 {
     PanelHierarchy,
-    PanelContent,
-    PanelInspector,
     PanelFiles,
+    PanelInspector,
     PanelPerformance,
     PanelCount
 };
 
 struct LayoutSettings
 {
-    PanelSide side[PanelCount] = {PanelSide::Left, PanelSide::Left, PanelSide::Right, PanelSide::Bottom,
-                                  PanelSide::Bottom};
+    PanelSide side[PanelCount] = {PanelSide::Left, PanelSide::Left, PanelSide::Right, PanelSide::Bottom};
     bool locked                = true;
 };
 

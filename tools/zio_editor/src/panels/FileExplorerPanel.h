@@ -33,8 +33,10 @@ private:
     std::filesystem::path boundRoot_;
     std::string selected_;
     FolderNode tree_;
-    double lastScan_ = -10.0;
-    float treeWidth_ = 220.f;
+    double lastScan_  = -10.0;
+    float treeWidth_  = 220.f;
+    float treeHeight_ = 170.f;
+    bool listView_    = false;
 };
 
 }

@@ -860,7 +860,7 @@ void EditorApp::buildDefaultLayout(std::uint32_t dockspaceId, float width, float
     if (!right.empty())
         rightId = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, nullptr, &center);
     if (!left.empty())
-        leftId = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, left.size() == 1 && right.empty() ? 0.22f : 0.26f,
+        leftId = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, left.size() >= 2 ? 0.27f : 0.22f,
                                              nullptr, &center);
     if (!bottom.empty())
         bottomId = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.26f, nullptr, &center);
@@ -870,7 +870,7 @@ void EditorApp::buildDefaultLayout(std::uint32_t dockspaceId, float width, float
         for (std::size_t i = 0; i + 1 < list.size(); ++i)
         {
             const float remaining = static_cast<float>(list.size() - i);
-            const float ratio     = list.size() == 2 ? 0.58f : 1.f / remaining;
+            const float ratio     = list.size() == 2 ? 0.45f : 1.f / remaining;
             ImGuiID first         = 0;
             ImGuiID next          = ImGui::DockBuilderSplitNode(rest, direction, ratio, &first, &rest);
             (void)next;
@@ -1149,7 +1149,6 @@ void EditorApp::drawUi(float frameTimeMs)
 
     hierarchyPanel_.draw(context_);
     inspectorPanel_.draw(context_);
-    contentBrowserPanel_.draw(context_);
     fileExplorerPanel_.draw(context_);
     diagnosticsPanel_.draw(frameTimeMs);
 

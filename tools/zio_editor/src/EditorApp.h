@@ -11,7 +11,6 @@
 #include "core/EditorContext.h"
 #include "core/Gizmo.h"
 #include "core/LayoutSettings.h"
-#include "panels/ContentBrowserPanel.h"
 #include "panels/DiagnosticsPanel.h"
 #include "panels/FileExplorerPanel.h"
 #include "panels/InspectorPanel.h"
@@ -104,7 +103,6 @@ private:
 
     SceneHierarchyPanel hierarchyPanel_;
     InspectorPanel inspectorPanel_;
-    ContentBrowserPanel contentBrowserPanel_;
     DiagnosticsPanel diagnosticsPanel_;
     FileExplorerPanel fileExplorerPanel_;
     bool focusFilesTab_ = false;

@@ -38,7 +38,6 @@ add_executable(zio_editor
     src/project/ProjectManager.cpp
     src/panels/AddObjectMenu.cpp
     src/panels/ContentBrowserModel.cpp
-    src/panels/ContentBrowserPanel.cpp
     src/panels/SceneHierarchyPanel.cpp
     src/panels/InspectorPanel.cpp
     src/panels/DiagnosticsPanel.cpp
