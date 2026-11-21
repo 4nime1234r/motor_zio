@@ -40,7 +40,7 @@ El editor vive en `tools/zio_editor` y está hecho con `zio::ui`, la librería d
 - Abrir, guardar y guardar como escenas 3D, con aviso si hay cambios sin guardar.
 - Añadir nodos vacíos, cubos y modelos `.obj`, `.gltf` y `.glb`.
 - Interfaz parecida a la de Godot: panel Escena con filtro de nodos y Sistema de archivos a la izquierda, visor 3D con la pestaña de la escena en el centro, Inspector con secciones plegables a la derecha, y abajo Salida (mensajes del editor) y Rendimiento. Los paneles se pueden colocar a la izquierda, a la derecha o abajo.
-- Sistema de archivos: una lista plana con todos los archivos, sin carpetas, con filtro, donde solo se puede crear, editar o eliminar. Cada archivo nuevo va a la carpeta que le corresponde según su tipo.
+- Sistema de archivos: una lista plana con todos los archivos, sin carpetas, con filtro, donde solo se puede crear, editar o eliminar, y esas opciones aparecen únicamente al hacer clic derecho. Cada archivo nuevo va a la carpeta que le corresponde según su tipo.
 - Visor 3D con cuadrícula, selección por clic y gizmos para mover, rotar y escalar.
 - Selección múltiple, copiar, pegar y duplicar.
 - Botón Jugar para ver la escena con su cámara y detenerla restaurando el estado editado.

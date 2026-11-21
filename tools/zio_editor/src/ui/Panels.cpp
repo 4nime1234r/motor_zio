@@ -556,16 +556,6 @@ std::unique_ptr<zio::ui::Widget> FilesPanel::build()
     auto column = std::make_unique<zio::ui::VBox>();
     column->setPadding(Edges::all(8.f));
 
-    auto* top = column->add<zio::ui::HBox>();
-    create_   = top->add<zio::ui::Button>(std::string("Crear"));
-    create_->setOnClick([this]() { showCreate(); });
-    edit_ = top->add<zio::ui::Button>(std::string("Editar"));
-    edit_->setOnClick([this]() {
-        if (const AssetEntry* entry = selectedEntry())
-            openEntry(*entry);
-    });
-    remove_ = top->add<zio::ui::Button>(std::string("Eliminar"));
-    remove_->setOnClick([this]() { showDelete(); });
     filter_ = column->add<zio::ui::LineEdit>();
     filter_->setPlaceholder("Filtrar archivos");
     filter_->setOnChanged([this](const std::string& text) {
@@ -600,15 +590,14 @@ std::vector<MenuItem> FilesPanel::menuItems()
     const bool has = selectedEntry() != nullptr;
     std::vector<MenuItem> items;
     items.push_back(MenuItem::item("Crear...", [this]() { showCreate(); }));
-    MenuItem edit = MenuItem::item("Editar", [this]() {
-        if (const AssetEntry* entry = selectedEntry())
-            openEntry(*entry);
-    });
-    edit.enabled = has;
-    items.push_back(std::move(edit));
-    MenuItem del = MenuItem::item("Eliminar...", [this]() { showDelete(); });
-    del.enabled  = has;
-    items.push_back(std::move(del));
+    if (has)
+    {
+        items.push_back(MenuItem::item("Editar", [this]() {
+            if (const AssetEntry* entry = selectedEntry())
+                openEntry(*entry);
+        }));
+        items.push_back(MenuItem::item("Eliminar...", [this]() { showDelete(); }));
+    }
     return items;
 }
 
@@ -635,11 +624,6 @@ void FilesPanel::setStatus(const std::string& text, bool error)
 
 void FilesPanel::updateButtons()
 {
-    const bool open = services_.context().project().isOpen();
-    const bool has  = selectedEntry() != nullptr;
-    create_->setEnabled(open);
-    edit_->setEnabled(has);
-    remove_->setEnabled(has);
 }
 
 void FilesPanel::openEntry(const AssetEntry& entry)

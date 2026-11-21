@@ -120,9 +120,6 @@ private:
     zio::ui::Widget* body_       = nullptr;
     zio::ui::Label* message_     = nullptr;
     zio::ui::Label* status_      = nullptr;
-    zio::ui::Button* create_     = nullptr;
-    zio::ui::Button* edit_       = nullptr;
-    zio::ui::Button* remove_     = nullptr;
     zio::ui::IconGrid* grid_     = nullptr;
     void applyFilter();
 
