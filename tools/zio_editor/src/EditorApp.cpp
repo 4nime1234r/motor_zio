@@ -33,7 +33,7 @@ fs::path layoutSettingsPath()
     const char* appData = std::getenv("APPDATA");
     if (!appData || !*appData)
         return {};
-    return fs::path(appData) / "ZioEditor" / "disposicion_ui.txt";
+    return fs::path(appData) / "ZioEditor" / "disposicion_ui_v2.txt";
 }
 
 }
@@ -364,10 +364,10 @@ std::vector<MenuItem> EditorApp::viewItems()
     return {MenuItem::submenuItem("Posición de los paneles", std::move(panels)), MenuItem::line(),
             MenuItem::item("Restablecer disposición", [this]() {
                 dock_->movePanel("jerarquia", zio::ui::DockSide::Left);
-                dock_->movePanel("archivos", zio::ui::DockSide::Left);
+                dock_->movePanel("archivos", zio::ui::DockSide::Bottom);
                 dock_->movePanel("inspector", zio::ui::DockSide::Right);
                 dock_->movePanel("rendimiento", zio::ui::DockSide::Bottom);
-                dock_->setFractions(0.24f, 0.26f, 0.24f);
+                dock_->setFractions(0.24f, 0.26f, 0.32f);
                 saveLayout();
             })};
 }
@@ -439,10 +439,10 @@ void EditorApp::buildUi()
     dock_->setExpand(true, true);
     dock_->setCenter(viewport_.build());
     dock_->addPanel("jerarquia", "Jerarquía", hierarchy_.build(), zio::ui::DockSide::Left);
-    dock_->addPanel("archivos", "Archivos", files_.build(), zio::ui::DockSide::Left);
+    dock_->addPanel("archivos", "Archivos", files_.build(), zio::ui::DockSide::Bottom);
     dock_->addPanel("inspector", "Inspector", inspector_.build(), zio::ui::DockSide::Right);
     dock_->addPanel("rendimiento", "Rendimiento", performance_.build(), zio::ui::DockSide::Bottom);
-    dock_->setFractions(0.24f, 0.26f, 0.24f);
+    dock_->setFractions(0.24f, 0.26f, 0.32f);
 
     buildStatusBar(page);
 }

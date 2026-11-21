@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <set>
 #include <system_error>
+#include <shellapi.h>
 
 #include "zio/jobs/JobSystem.h"
 #include "zio/renderer/BatchRenderer.h"
@@ -32,54 +33,9 @@ using zio::ui::TreeItem;
 using zio::ui::Vec2;
 using zio::ui::rgb;
 
-const Color kFolderColor = rgb(0xfacc15);
 const Color kSceneColor  = rgb(0x818cf8);
 const Color kMeshColor   = rgb(0x66d98c);
 const Color kNodeColor   = rgb(0x9ca3af);
-
-class AdaptiveSplit final : public zio::ui::Widget
-{
-public:
-    AdaptiveSplit(std::unique_ptr<zio::ui::Widget> first, std::unique_ptr<zio::ui::Widget> second)
-        : firstRaw_(first.get()), secondRaw_(second.get()), firstOwned_(std::move(first)), secondOwned_(std::move(second))
-    {
-    }
-
-    zio::ui::Vec2 contentMinSize() const override { return {0.f, 0.f}; }
-
-    void layout() override
-    {
-        const bool wide = rect().w >= 620.f;
-        if (!split_ || wide != wide_)
-            rebuild(wide);
-        split_->setRect(rect());
-    }
-
-private:
-    void rebuild(bool wide)
-    {
-        if (split_)
-        {
-            firstOwned_  = split_->removeChild(firstRaw_);
-            secondOwned_ = split_->removeChild(secondRaw_);
-            removeChild(split_);
-            split_ = nullptr;
-        }
-        auto split = std::make_unique<zio::ui::SplitContainer>(!wide);
-        split->setRatio(wide ? 0.3f : 0.42f);
-        split->addChild(std::move(firstOwned_));
-        split->addChild(std::move(secondOwned_));
-        split_ = static_cast<zio::ui::SplitContainer*>(addChild(std::move(split)));
-        wide_  = wide;
-    }
-
-    zio::ui::Widget* firstRaw_;
-    zio::ui::Widget* secondRaw_;
-    std::unique_ptr<zio::ui::Widget> firstOwned_;
-    std::unique_ptr<zio::ui::Widget> secondOwned_;
-    zio::ui::SplitContainer* split_ = nullptr;
-    bool wide_                      = false;
-};
 
 std::string lowerCase(std::string text)
 {
@@ -111,23 +67,18 @@ bool oneOf(const std::string& ext, std::initializer_list<const char*> list)
     return false;
 }
 
-zio::ui::IconItem iconFor(const ContentBrowserModel::Entry& entry)
+zio::ui::IconItem iconFor(const AssetEntry& entry)
 {
     zio::ui::IconItem item;
-    item.text = entry.displayName;
-    const std::string ext = extensionOf(entry.name);
+    item.text = entry.relative.size() > 7 ? entry.relative.substr(7) : entry.relative;
+    const std::string& ext = entry.extension;
 
-    if (entry.isDirectory)
-    {
-        item.color  = kFolderColor;
-        item.folder = true;
-    }
-    else if (entry.isScene)
+    if (ext == "zscene3d")
     {
         item.color = kSceneColor;
         item.badge = "ESC";
     }
-    else if (entry.isMesh || oneOf(ext, {"gltf", "glb", "fbx"}))
+    else if (oneOf(ext, {"obj", "gltf", "glb", "fbx", "bin"}))
     {
         item.color = kMeshColor;
         item.badge = "3D";
@@ -551,210 +502,241 @@ std::unique_ptr<zio::ui::Widget> FilesPanel::build()
     column->setPadding(Edges::all(8.f));
 
     auto* top = column->add<zio::ui::HBox>();
-    auto* up  = top->add<zio::ui::Button>(std::string("Subir"));
-    up->setOnClick([this]() {
-        if (model_.canGoUp())
-        {
-            model_.goUp();
-            gridSignature_.clear();
-            crumbSignature_.clear();
-            timer_ = 10.f;
-        }
+    create_   = top->add<zio::ui::Button>(std::string("Crear"));
+    create_->setOnClick([this]() { showCreate(); });
+    edit_ = top->add<zio::ui::Button>(std::string("Editar"));
+    edit_->setOnClick([this]() {
+        if (const AssetEntry* entry = selectedEntry())
+            openEntry(*entry);
     });
-    crumbs_ = top->add<zio::ui::HBox>();
-    crumbs_->setExpand(true, false);
-    crumbs_->setSeparation(2.f);
-    auto* mode = top->add<zio::ui::Button>(std::string("Lista"));
-    mode->setToggle(true);
-    mode->setTooltip("Cambia entre iconos y lista");
-    mode->setOnToggled([this](bool list) {
-        if (grid_)
-            grid_->setListMode(list);
-    });
+    remove_ = top->add<zio::ui::Button>(std::string("Eliminar"));
+    remove_->setOnClick([this]() { showDelete(); });
+    status_ = top->add<zio::ui::Label>(std::string());
+    status_->setExpand(true, false);
 
     message_ = column->add<zio::ui::Label>(std::string("Abre o crea un proyecto desde el menú Proyecto."));
     message_->setColor(zio::ui::rgb(0x9ca3af));
 
-    auto folderScroll = std::make_unique<zio::ui::ScrollContainer>(true, false);
-    folders_          = folderScroll->add<zio::ui::TreeView>();
-    folders_->setOnSelectionChanged([this]() {
-        if (syncing_)
-            return;
-        const auto selection = folders_->selection();
-        if (!selection.empty() && selection.front()->userData)
-            navigate(*static_cast<std::string*>(selection.front()->userData));
-    });
-
-    auto gridScroll = std::make_unique<zio::ui::ScrollContainer>(true, false);
-    grid_           = gridScroll->add<zio::ui::IconGrid>();
+    auto scroll = std::make_unique<zio::ui::ScrollContainer>(true, false);
+    grid_       = scroll->add<zio::ui::IconGrid>();
+    grid_->setListMode(true);
     grid_->setOnActivated([this](int index) { activate(index); });
-
-    auto* split = column->add<AdaptiveSplit>(std::move(folderScroll), std::move(gridScroll));
-    split->setExpand(true, true);
-    body_ = split;
+    grid_->setOnSelectionChanged([this]() { updateButtons(); });
+    grid_->setOnContextMenu([this](int index, Vec2 position) {
+        if (index >= 0)
+            grid_->select(index);
+        services_.showPopup(menuItems(), position);
+    });
+    body_ = column->addChild(std::move(scroll));
+    body_->setExpand(true, true);
     return column;
 }
 
-void FilesPanel::navigate(const std::string& relative)
+std::vector<MenuItem> FilesPanel::menuItems()
 {
-    if (model_.goTo(services_.context().project(), relative))
+    const bool has = selectedEntry() != nullptr;
+    std::vector<MenuItem> items;
+    items.push_back(MenuItem::item("Crear...", [this]() { showCreate(); }));
+    MenuItem edit = MenuItem::item("Editar", [this]() {
+        if (const AssetEntry* entry = selectedEntry())
+            openEntry(*entry);
+    });
+    edit.enabled = has;
+    items.push_back(std::move(edit));
+    MenuItem del = MenuItem::item("Eliminar...", [this]() { showDelete(); });
+    del.enabled  = has;
+    items.push_back(std::move(del));
+    return items;
+}
+
+const AssetEntry* FilesPanel::selectedEntry() const
+{
+    const int index = grid_ ? grid_->current() : -1;
+    if (index < 0 || index >= static_cast<int>(entries_.size()))
+        return nullptr;
+    const auto selection = grid_->selection();
+    if (selection.empty())
+        return nullptr;
+    return &entries_[static_cast<std::size_t>(index)];
+}
+
+void FilesPanel::setStatus(const std::string& text, bool error)
+{
+    statusText_  = text;
+    statusError_ = error;
+    status_->setText(text);
+    status_->setColor(error ? services_.ui().theme().danger : zio::ui::rgb(0x9ca3af));
+}
+
+void FilesPanel::updateButtons()
+{
+    const bool open = services_.context().project().isOpen();
+    const bool has  = selectedEntry() != nullptr;
+    create_->setEnabled(open);
+    edit_->setEnabled(has);
+    remove_->setEnabled(has);
+}
+
+void FilesPanel::openEntry(const AssetEntry& entry)
+{
+    auto& ctx = services_.context();
+    if (entry.extension == "zscene3d")
     {
-        gridSignature_.clear();
-        crumbSignature_.clear();
-        timer_ = 10.f;
+        ctx.request(Action{ActionKind::OpenScene, entry.relative, {}});
+        return;
     }
+    const auto absolute = ctx.project().resolve(entry.relative);
+    if (!absolute)
+    {
+        setStatus("Ruta inválida.", true);
+        return;
+    }
+    const HINSTANCE result = ShellExecuteW(nullptr, L"open", absolute->wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(result) <= 32)
+        setStatus("No hay un programa para abrir " + entry.name + ".", true);
+    else
+        setStatus("Abierto " + entry.name, false);
 }
 
 void FilesPanel::activate(int index)
 {
     if (index < 0 || index >= static_cast<int>(entries_.size()))
         return;
-    const auto& entry = entries_[static_cast<std::size_t>(index)];
-    auto& ctx         = services_.context();
-    if (entry.isDirectory)
-        navigate(entry.relativePath);
-    else if (entry.isScene)
-        ctx.request(Action{ActionKind::OpenScene, entry.relativePath, {}});
-    else if (entry.isMesh)
-        ctx.addNode(NewNodeKind::Mesh, entry.relativePath);
+    const AssetEntry& entry = entries_[static_cast<std::size_t>(index)];
+    if (ProjectManager::isMeshFile(entry.name))
+        services_.context().addNode(NewNodeKind::Mesh, entry.relative);
+    else
+        openEntry(entry);
 }
 
-void FilesPanel::scan(FolderInfo& node, int depth) const
+void FilesPanel::showCreate()
 {
-    if (depth >= 8)
+    using namespace zio::ui;
+    if (!services_.context().project().isOpen())
         return;
-    const auto absolute = services_.context().project().resolve(node.relative);
-    if (!absolute)
+    auto dialog  = std::make_unique<Dialog>("Crear archivo");
+    auto content = std::make_unique<VBox>();
+    content->add<Label>(std::string("Nombre con extensión (jugador.cs, nivel.zscene3d, notas.txt)"));
+    auto* name  = content->add<LineEdit>();
+    auto* error = content->add<Label>(std::string());
+    error->setColor(services_.ui().theme().danger);
+    dialog->setContent(std::move(content));
+    dialog->setWidth(480.f);
+
+    Dialog* raw  = dialog.get();
+    auto confirm = [this, raw, name, error]() {
+        std::string problem, relative;
+        if (!AssetFiles::create(services_.context().project(), name->text(), &relative, &problem))
+        {
+            error->setText(problem);
+            return;
+        }
+        raw->close();
+        setStatus("Creado " + relative.substr(7), false);
+        requestScan();
+    };
+    dialog->addButton("Cancelar", [raw]() { raw->cancel(); });
+    dialog->addButton("Crear", confirm, true);
+    dialog->setOnConfirm(confirm);
+    name->setOnSubmit([confirm](const std::string&) { confirm(); });
+    name->setOnCancel([raw]() { raw->cancel(); });
+    services_.ui().openPopup(std::move(dialog));
+    services_.ui().setFocus(name);
+}
+
+void FilesPanel::showDelete()
+{
+    using namespace zio::ui;
+    const AssetEntry* selected = selectedEntry();
+    if (!selected)
         return;
-    std::error_code ec;
-    fs::directory_iterator it(*absolute, ec);
-    if (ec)
-        return;
-    for (const fs::directory_iterator end; it != end; it.increment(ec))
+    const AssetEntry entry = *selected;
+    auto& ctx              = services_.context();
+    if (entry.relative == ctx.currentScene() || entry.name == ctx.currentScene())
     {
-        if (ec)
-            break;
-        std::error_code entryEc;
-        if (!it->is_directory(entryEc))
-            continue;
-        FolderInfo child;
-        child.name = it->path().filename().string();
-        if (child.name.empty() || child.name.front() == '.')
-            continue;
-        child.relative = node.relative + "/" + child.name;
-        child.display  = ContentBrowserModel::displayName(node.relative, child.name);
-        scan(child, depth + 1);
-        node.children.push_back(std::move(child));
+        setStatus("Esa escena está abierta: abre otra antes de eliminarla.", true);
+        return;
     }
-    std::sort(node.children.begin(), node.children.end(),
-              [](const FolderInfo& a, const FolderInfo& b) { return lowerCase(a.display) < lowerCase(b.display); });
+    auto dialog  = std::make_unique<Dialog>("Eliminar archivo");
+    auto content = std::make_unique<VBox>();
+    content->add<Label>("¿Eliminar " + entry.relative.substr(7) + "?");
+    content->add<Label>(std::string("No se puede deshacer."))->setColor(services_.ui().theme().textDim);
+    auto* error = content->add<Label>(std::string());
+    error->setColor(services_.ui().theme().danger);
+    dialog->setContent(std::move(content));
+    dialog->setWidth(440.f);
+
+    Dialog* raw  = dialog.get();
+    auto confirm = [this, raw, entry, error]() {
+        std::string problem;
+        if (!AssetFiles::remove(services_.context().project(), entry.relative, &problem))
+        {
+            error->setText(problem);
+            return;
+        }
+        raw->close();
+        setStatus("Eliminado " + entry.relative.substr(7), false);
+        requestScan();
+    };
+    dialog->addButton("Cancelar", [raw]() { raw->cancel(); });
+    dialog->addButton("Eliminar", confirm, true);
+    dialog->setOnConfirm(confirm);
+    services_.ui().openPopup(std::move(dialog));
 }
 
-void FilesPanel::fillFolderTree(TreeItem* parent, const FolderInfo& info, const std::vector<std::string>& collapsed)
+void FilesPanel::applyEntries(std::vector<AssetEntry> entries)
 {
-    pathStore_.push_back(info.relative);
-    TreeItem* item  = parent->add(info.display);
-    item->userData  = &pathStore_.back();
-    item->iconColor = kFolderColor;
-    item->expanded  = std::find(collapsed.begin(), collapsed.end(), info.relative) == collapsed.end();
-    for (const FolderInfo& child : info.children)
-        fillFolderTree(item, child, collapsed);
-}
-
-void FilesPanel::rescanFolders()
-{
-    FolderInfo root;
-    root.name     = ContentBrowserModel::kRoot;
-    root.display  = ContentBrowserModel::kRoot;
-    root.relative = ContentBrowserModel::kRoot;
-    scan(root, 0);
-
     std::string signature;
-    std::vector<const FolderInfo*> stack = {&root};
-    while (!stack.empty())
-    {
-        const FolderInfo* info = stack.back();
-        stack.pop_back();
-        signature += info->relative + "|";
-        for (const FolderInfo& child : info->children)
-            stack.push_back(&child);
-    }
-
-    if (signature != folderSignature_)
-    {
-        folderSignature_ = signature;
-        std::vector<std::string> collapsed;
-        std::vector<TreeItem*> items = {folders_->root()};
-        while (!items.empty())
-        {
-            TreeItem* item = items.back();
-            items.pop_back();
-            for (const auto& child : item->children())
-            {
-                if (!child->expanded && child->userData)
-                    collapsed.push_back(*static_cast<std::string*>(child->userData));
-                items.push_back(child.get());
-            }
-        }
-        folders_->root()->clear();
-        pathStore_.clear();
-        fillFolderTree(folders_->root(), root, collapsed);
-        folders_->rebuildRows();
-    }
-
-    syncing_ = true;
-    std::vector<TreeItem*> items = {folders_->root()};
-    while (!items.empty())
-    {
-        TreeItem* item = items.back();
-        items.pop_back();
-        for (const auto& child : item->children())
-        {
-            child->selected = child->userData && *static_cast<std::string*>(child->userData) == model_.currentDir();
-            items.push_back(child.get());
-        }
-    }
-    syncing_ = false;
-}
-
-void FilesPanel::rebuildGrid()
-{
-    std::string error;
-    entries_ = model_.list(services_.context().project(), &error);
-
-    std::string signature = model_.currentDir() + "|";
-    for (const auto& entry : entries_)
-        signature += entry.name + (entry.isDirectory ? "/" : "") + "|";
-    if (signature == gridSignature_)
+    for (const AssetEntry& entry : entries)
+        signature += entry.relative + "|";
+    if (signature == signature_)
         return;
-    gridSignature_ = signature;
+    signature_ = signature;
 
+    std::string keep;
+    if (const AssetEntry* selected = selectedEntry())
+        keep = selected->relative;
+
+    entries_ = std::move(entries);
     std::vector<zio::ui::IconItem> items;
-    for (const auto& entry : entries_)
+    for (const AssetEntry& entry : entries_)
         items.push_back(iconFor(entry));
     grid_->setItems(std::move(items));
+
+    if (!keep.empty())
+        for (std::size_t i = 0; i < entries_.size(); ++i)
+            if (entries_[i].relative == keep)
+                grid_->select(static_cast<int>(i));
+    updateButtons();
 }
 
-void FilesPanel::rebuildCrumbs()
+void FilesPanel::requestScan()
 {
-    const auto crumbs = model_.breadcrumbs();
-    std::string signature;
-    for (const auto& crumb : crumbs)
-        signature += crumb.second + "|";
-    if (signature == crumbSignature_)
-        return;
-    crumbSignature_ = signature;
-
-    crumbs_->clearChildren();
-    for (std::size_t i = 0; i < crumbs.size(); ++i)
+    if (scanning_)
     {
-        if (i > 0)
-            crumbs_->add<zio::ui::Label>(std::string("/"))->setColor(zio::ui::rgb(0x9ca3af));
-        auto* button = crumbs_->add<zio::ui::Button>(crumbs[i].first);
-        button->setFlat(true);
-        const std::string target = crumbs[i].second;
-        button->setOnClick([this, target]() { navigate(target); });
+        rescan_ = true;
+        return;
     }
+    const fs::path root = services_.context().project().rootDir();
+    if (root.empty())
+        return;
+    scanning_ = true;
+    auto result = std::make_shared<std::vector<AssetEntry>>();
+    auto alive  = alive_;
+    zio::jobs::JobSystem::instance().enqueue(
+        [root, result]() { *result = AssetFiles::scan(root); },
+        [this, result, alive, root]() {
+            if (!*alive)
+                return;
+            scanning_ = false;
+            if (root == boundRoot_)
+                applyEntries(std::move(*result));
+            if (rescan_)
+            {
+                rescan_ = false;
+                requestScan();
+            }
+        });
 }
 
 void FilesPanel::refresh(float dt)
@@ -762,30 +744,32 @@ void FilesPanel::refresh(float dt)
     const ProjectManager& project = services_.context().project();
     body_->setVisible(project.isOpen());
     message_->setVisible(!project.isOpen());
-    crumbs_->setVisible(project.isOpen());
+    status_->setVisible(project.isOpen());
     if (!project.isOpen())
     {
         boundRoot_.clear();
+        signature_.clear();
+        entries_.clear();
+        grid_->setItems({});
+        updateButtons();
         return;
     }
 
     if (boundRoot_ != project.rootDir())
     {
         boundRoot_ = project.rootDir();
-        model_.reset();
-        folderSignature_.clear();
-        gridSignature_.clear();
-        crumbSignature_.clear();
+        signature_.clear();
+        entries_.clear();
+        grid_->setItems({});
+        setStatus(std::string(), false);
         timer_ = 10.f;
     }
 
     timer_ += dt;
-    if (timer_ > 1.5f)
+    if (timer_ > 2.f)
     {
         timer_ = 0.f;
-        rescanFolders();
-        rebuildGrid();
-        rebuildCrumbs();
+        requestScan();
     }
 }
 

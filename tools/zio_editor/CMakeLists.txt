@@ -23,12 +23,12 @@ add_executable(zio_editor
     src/EditorApp.cpp
     src/core/EditorContext.cpp
     src/core/Gizmo.cpp
+    src/core/AssetFiles.cpp
     src/core/RecentProject.cpp
     src/core/Picking.cpp
     src/core/SelectionGizmo.cpp
     src/core/ViewportGrid.cpp
     src/project/ProjectManager.cpp
-    src/panels/ContentBrowserModel.cpp
     src/ui/Panels.cpp
     src/ui/ToolButton.cpp
     src/ui/ViewportController.cpp

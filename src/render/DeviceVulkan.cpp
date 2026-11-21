@@ -96,6 +96,10 @@ struct Device::Impl
         BufferUsage usage              = BufferUsage::Immutable;
         std::uint32_t capacity         = 0;
         VkBufferUsageFlags usageFlags  = 0;
+        void* mapped                   = nullptr;
+        VkDeviceSize ringSize          = 0;
+        VkDeviceSize writeOffset       = 0;
+        VkDeviceSize currentOffset     = 0;
     };
     std::vector<BufferSlot> buffers;
 
@@ -358,6 +362,16 @@ struct Device::Impl
         info.preTransform     = caps.currentTransform;
         info.compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         info.presentMode      = VK_PRESENT_MODE_FIFO_KHR;
+        {
+            std::uint32_t modeCount = 0;
+            vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &modeCount, nullptr);
+            std::vector<VkPresentModeKHR> modes(modeCount);
+            if (modeCount)
+                vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &modeCount, modes.data());
+            for (const VkPresentModeKHR mode : modes)
+                if (mode == VK_PRESENT_MODE_MAILBOX_KHR)
+                    info.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+        }
         info.clipped          = VK_TRUE;
 
         const VkResult swapchainResult = vkCreateSwapchainKHR(device, &info, nullptr, &swapchain);
@@ -1094,8 +1108,27 @@ BufferHandle Device::createBuffer(const BufferDesc& desc)
         vkUnmapMemory(impl_->device, memory);
     }
 
-    impl_->buffers.push_back(
-        Impl::BufferSlot{buffer, memory, desc.usage, static_cast<std::uint32_t>(desc.sizeBytes), usage});
+    Impl::BufferSlot slot{buffer, memory, desc.usage, static_cast<std::uint32_t>(desc.sizeBytes), usage};
+    if (desc.usage == BufferUsage::Dynamic)
+    {
+        vkDestroyBuffer(impl_->device, buffer, nullptr);
+        vkFreeMemory(impl_->device, memory, nullptr);
+        slot.buffer = VK_NULL_HANDLE;
+        slot.memory = VK_NULL_HANDLE;
+        slot.ringSize = static_cast<VkDeviceSize>(desc.sizeBytes) * 3;
+        if (!impl_->createBuffer(slot.ringSize, usage,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  slot.buffer, slot.memory))
+            return kInvalidHandle;
+        vkMapMemory(impl_->device, slot.memory, 0, VK_WHOLE_SIZE, 0, &slot.mapped);
+        if (desc.data)
+        {
+            std::memcpy(slot.mapped, desc.data, desc.sizeBytes);
+            slot.writeOffset = (static_cast<VkDeviceSize>(desc.sizeBytes) + 255) & ~static_cast<VkDeviceSize>(255);
+            slot.currentOffset = 0;
+        }
+    }
+    impl_->buffers.push_back(slot);
     return static_cast<BufferHandle>(impl_->buffers.size());
 }
 
@@ -1125,26 +1158,29 @@ bool Device::updateBuffer(BufferHandle handle, const void* data, std::uint32_t s
     if (slot.usage != BufferUsage::Dynamic || !slot.buffer || sizeBytes > slot.capacity)
         return false;
 
-    VkBuffer newBuffer       = VK_NULL_HANDLE;
-    VkDeviceMemory newMemory = VK_NULL_HANDLE;
-    if (!impl_->createBuffer(slot.capacity, slot.usageFlags,
-                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, newBuffer,
-                              newMemory))
-        return false;
-
-    void* mapped = nullptr;
-    vkMapMemory(impl_->device, newMemory, 0, sizeBytes, 0, &mapped);
-    std::memcpy(mapped, data, sizeBytes);
-    vkUnmapMemory(impl_->device, newMemory);
-
-    impl_->pendingFrees.emplace_back(slot.buffer, slot.memory);
-    if (slot.buffer == impl_->cached_vertex_buffer)
+    const VkDeviceSize needed = (static_cast<VkDeviceSize>(sizeBytes) + 255) & ~static_cast<VkDeviceSize>(255);
+    if (slot.writeOffset + needed > slot.ringSize)
     {
+        VkBuffer newBuffer       = VK_NULL_HANDLE;
+        VkDeviceMemory newMemory = VK_NULL_HANDLE;
+        if (!impl_->createBuffer(slot.ringSize, slot.usageFlags,
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  newBuffer, newMemory))
+            return false;
+        void* mapped = nullptr;
+        vkMapMemory(impl_->device, newMemory, 0, VK_WHOLE_SIZE, 0, &mapped);
+        impl_->pendingFrees.emplace_back(slot.buffer, slot.memory);
+        slot.buffer      = newBuffer;
+        slot.memory      = newMemory;
+        slot.mapped      = mapped;
+        slot.writeOffset = 0;
         impl_->cached_vertex_buffer = VK_NULL_HANDLE;
         impl_->cached_vertex_offset = 0;
     }
-    slot.buffer = newBuffer;
-    slot.memory = newMemory;
+
+    std::memcpy(static_cast<std::uint8_t*>(slot.mapped) + slot.writeOffset, data, sizeBytes);
+    slot.currentOffset = slot.writeOffset;
+    slot.writeOffset += needed;
     return true;
 }
 
@@ -1474,6 +1510,11 @@ void Device::beginFrame(const ClearColor& clear)
         vkFreeMemory(impl_->device, mem, nullptr);
     }
     impl_->pendingFrees.clear();
+    for (auto& slot : impl_->buffers)
+    {
+        slot.writeOffset   = 0;
+        slot.currentOffset = 0;
+    }
 
     const VkResult acquireResult = vkAcquireNextImageKHR(impl_->device, impl_->swapchain, UINT64_MAX,
                                                           impl_->imageAvailable, VK_NULL_HANDLE,
@@ -1510,7 +1551,7 @@ void Device::bindVertexBuffer(BufferHandle handle, std::uint32_t )
     if (!buffer)
         return;
 
-    const VkDeviceSize offset = 0;
+    const VkDeviceSize offset = impl_->buffers[handle - 1].currentOffset;
     if (impl_->cached_vertex_buffer == buffer && impl_->cached_vertex_offset == offset)
         return;
     vkCmdBindVertexBuffers(impl_->cmd, 0, 1, &buffer, &offset);

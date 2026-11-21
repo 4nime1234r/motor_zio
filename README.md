@@ -39,7 +39,7 @@ El editor vive en `tools/zio_editor` y está hecho con `zio::ui`, la librería d
 - Crear y abrir proyectos. Cada proyecto es una carpeta con `project.zio` y subcarpetas de modelos, texturas y escenas.
 - Abrir, guardar y guardar como escenas 3D, con aviso si hay cambios sin guardar.
 - Añadir nodos vacíos, cubos y modelos `.obj`, `.gltf` y `.glb`.
-- Panel de archivos del proyecto, con árbol de carpetas y cuadrícula de iconos por tipo (escenas, modelos, texturas, audio y scripts de C++, C# y Lua).
+- Panel de archivos del proyecto: una lista plana con todos los archivos, sin carpetas, junto al panel de Rendimiento, donde solo se puede crear, editar o eliminar. Cada archivo nuevo va a la carpeta que le corresponde según su tipo.
 - Visor 3D con cuadrícula, selección por clic y gizmos para mover, rotar y escalar.
 - Selección múltiple, copiar, pegar y duplicar.
 - Botón Jugar para ver la escena con su cámara y detenerla restaurando el estado editado.

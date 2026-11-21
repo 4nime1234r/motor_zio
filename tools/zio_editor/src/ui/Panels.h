@@ -9,7 +9,7 @@
 
 #include "core/EditorContext.h"
 #include "core/EulerCache.h"
-#include "panels/ContentBrowserModel.h"
+#include "core/AssetFiles.h"
 #include "zio/ui/UI.h"
 
 namespace zio_editor
@@ -90,43 +90,41 @@ private:
 class FilesPanel
 {
 public:
-    explicit FilesPanel(EditorServices& services) : services_(services) {}
+    explicit FilesPanel(EditorServices& services) : services_(services), alive_(std::make_shared<bool>(true)) {}
+    ~FilesPanel() { *alive_ = false; }
 
     std::unique_ptr<zio::ui::Widget> build();
     void refresh(float dt);
 
 private:
-    struct FolderInfo
-    {
-        std::string name;
-        std::string display;
-        std::string relative;
-        std::vector<FolderInfo> children;
-    };
-
-    void rescanFolders();
-    void scan(FolderInfo& node, int depth) const;
-    void fillFolderTree(zio::ui::TreeItem* parent, const FolderInfo& info, const std::vector<std::string>& collapsed);
-    void rebuildGrid();
-    void rebuildCrumbs();
-    void navigate(const std::string& relative);
+    void requestScan();
+    void applyEntries(std::vector<AssetEntry> entries);
+    void updateButtons();
     void activate(int index);
+    void openEntry(const AssetEntry& entry);
+    const AssetEntry* selectedEntry() const;
+    void showCreate();
+    void showDelete();
+    void setStatus(const std::string& text, bool error);
+    std::vector<zio::ui::MenuItem> menuItems();
 
     EditorServices& services_;
-    ContentBrowserModel model_;
+    std::shared_ptr<bool> alive_;
     std::filesystem::path boundRoot_;
-    zio::ui::Widget* body_         = nullptr;
-    zio::ui::Label* message_       = nullptr;
-    zio::ui::HBox* crumbs_         = nullptr;
-    zio::ui::TreeView* folders_    = nullptr;
-    zio::ui::IconGrid* grid_       = nullptr;
-    std::vector<ContentBrowserModel::Entry> entries_;
-    std::deque<std::string> pathStore_;
-    std::string folderSignature_;
-    std::string gridSignature_;
-    std::string crumbSignature_;
-    float timer_    = 10.f;
-    bool syncing_   = false;
+    zio::ui::Widget* body_       = nullptr;
+    zio::ui::Label* message_     = nullptr;
+    zio::ui::Label* status_      = nullptr;
+    zio::ui::Button* create_     = nullptr;
+    zio::ui::Button* edit_       = nullptr;
+    zio::ui::Button* remove_     = nullptr;
+    zio::ui::IconGrid* grid_     = nullptr;
+    std::vector<AssetEntry> entries_;
+    std::string signature_;
+    std::string statusText_;
+    bool statusError_ = false;
+    float timer_      = 10.f;
+    bool scanning_    = false;
+    bool rescan_      = false;
 };
 
 class PerformancePanel
