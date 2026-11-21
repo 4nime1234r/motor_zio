@@ -52,6 +52,7 @@ public:
     Widget* openPopup(std::unique_ptr<Widget> popup);
     void closePopups();
     void closePopupsAbove(Widget* popup);
+    void closePopup(Widget* popup);
     bool hasPopups() const;
     Widget* topPopup() const;
     std::size_t popupCount() const;
@@ -71,7 +72,6 @@ private:
     void hideTooltip();
     void updateTooltip(float dt);
     std::vector<Widget*> popupList() const;
-    void closePopupWidget(Widget* popup);
     void focusNext(bool backwards);
     void updateHover(Vec2 position);
 

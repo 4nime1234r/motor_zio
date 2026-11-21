@@ -5,6 +5,7 @@
 #include "zio/ui/Containers.h"
 #include "zio/ui/Context.h"
 #include "zio/ui/Controls.h"
+#include "zio/ui/Dialog.h"
 #include "zio/ui/Dock.h"
 #include "zio/ui/EngineHost.h"
 #include "zio/ui/Fields.h"

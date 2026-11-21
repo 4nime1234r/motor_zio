@@ -63,6 +63,7 @@ add_library(engine STATIC
     src/ui/Containers.cpp
     src/ui/Controls.cpp
     src/ui/Core.cpp
+    src/ui/Dialog.cpp
     src/ui/Dock.cpp
     src/ui/EngineHost.cpp
     src/ui/Fields.cpp
@@ -89,7 +90,7 @@ target_link_libraries(engine PUBLIC Threads::Threads)
 target_link_libraries(engine PUBLIC Vulkan::Vulkan)
 if(WIN32)
     target_link_libraries(engine PUBLIC
-        user32 gdi32 ole32 gdiplus xinput xaudio2 mfplat mfreadwrite)
+        user32 gdi32 winmm ole32 gdiplus xinput xaudio2 mfplat mfreadwrite)
 endif()
 
 zio_add_spirv_shader(engine

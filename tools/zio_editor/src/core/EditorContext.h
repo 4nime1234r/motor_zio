@@ -62,6 +62,8 @@ public:
     bool select(zio::scene3d::Node3D* node);
     bool toggleSelect(zio::scene3d::Node3D* node);
     void clearSelection();
+    void selectNodes(std::vector<zio::scene3d::Node3D*> nodes);
+    std::uint64_t changeStamp() const { return changeStamp_; }
     bool isSelected(const zio::scene3d::Node3D* node) const;
     const std::vector<zio::scene3d::Node3D*>& selection() const { return selection_; }
     std::vector<zio::scene3d::Node3D*> selectionRoots() const;

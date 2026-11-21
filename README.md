@@ -32,7 +32,7 @@ Es un proyecto en desarrollo activo. La versión actual es la **0.2.0**.
 
 ## Editor
 
-El editor vive en `tools/zio_editor` y está hecho con Dear ImGui.
+El editor vive en `tools/zio_editor` y está hecho con `zio::ui`, la librería de interfaz propia del motor.
 
 - Crear y abrir proyectos. Cada proyecto es una carpeta con `project.zio` y subcarpetas de modelos, texturas y escenas.
 - Abrir, guardar y guardar como escenas 3D, con aviso si hay cambios sin guardar.
@@ -131,7 +131,6 @@ src/              Código del motor y shaders
 tools/zio_editor  El editor
 projects/         Proyectos de ejemplo
 cmake/            Scripts y plantillas de CMake
-third_party/      Dear ImGui
 ```
 
 ## Licencia
@@ -139,5 +138,3 @@ third_party/      Dear ImGui
 Zio es software propietario. Copyright (c) 2026 4nime1234r. Todos los derechos reservados.
 
 Puedes compilarlo y usarlo para crear tus propios juegos y distribuirlos sin regalías, pero no puedes copiar, modificar ni redistribuir el motor o su código. Consulta el archivo [LICENSE](LICENSE) para los términos completos.
-
-Dear ImGui, en `third_party/imgui`, se distribuye bajo su propia licencia MIT.

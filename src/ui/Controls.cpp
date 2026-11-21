@@ -84,13 +84,13 @@ void Button::draw(Painter& painter)
     const bool enabled   = enabledInTree();
     const bool inside    = hovered() || pressed_;
 
-    Color fill = t.raised;
+    Color fill = primary_ ? t.accent : t.raised;
     if (toggled_)
         fill = t.accent;
     else if (pressed_ && enabled)
-        fill = t.raisedPressed;
+        fill = primary_ ? t.accentHover : t.raisedPressed;
     else if (inside && enabled)
-        fill = t.raisedHover;
+        fill = primary_ ? t.accentHover : t.raisedHover;
     else if (flat_)
         fill = rgb(0xffffff, 0.f);
 

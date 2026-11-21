@@ -1,74 +1,579 @@
 #include "EditorApp.h"
 
-#include <imgui.h>
-#include <imgui_internal.h>
-#include <imgui_impl_win32.h>
-
-#include <vulkan/vulkan.h>
-
-#include <imgui_impl_vulkan.h>
-
 #include <algorithm>
-#include <chrono>
-#include <cmath>
 #include <cstdio>
-#include <cstring>
-#include <vector>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 
-#include "EditorWindow.h"
-#include "core/Icons.h"
-#include "core/LayoutSettings.h"
-#include "core/Picking.h"
 #include "core/RecentProject.h"
-#include "core/SelectionGizmo.h"
-#include "core/Theme.h"
-#include "core/ViewportGrid.h"
-#include "panels/AddObjectMenu.h"
+#include "zio/input/InputManager.h"
+#include "zio/platform/Window.h"
 #include "zio/render/Device.h"
-#include "zio/scene3d/Renderer3D.h"
+#include "zio/renderer/BatchRenderer.h"
+
+#ifndef ZIO_VERSION
+#define ZIO_VERSION "0.0.0"
+#endif
+
+namespace fs = std::filesystem;
 
 namespace zio_editor
 {
 
 namespace
 {
-constexpr std::uint32_t kInitialWidth  = 1600;
-constexpr std::uint32_t kInitialHeight = 900;
 
-constexpr float kSidePanelWidth    = 330.f;
-constexpr float kBottomPanelHeight = 250.f;
+using zio::ui::MenuItem;
 
-constexpr ImVec4 kErrorColor  = ImVec4(0.937f, 0.267f, 0.267f, 1.f);
-constexpr ImVec4 kUpdateColor = ImVec4(0.506f, 0.549f, 0.973f, 1.f);
+constexpr float kFrameClamp = 0.1f;
 
-constexpr float kSnapStep       = 0.25f;
-constexpr float kFastMultiplier = 3.f;
-constexpr float kMinFlySpeed    = 0.5f;
-constexpr float kFlySpeedPerDistance = 0.6f;
-constexpr float kMaxFrameTime   = 0.1f;
-constexpr float kFocusDistance  = 2.5f;
-constexpr float kMinFocus       = 1.5f;
-constexpr float kMenuClickRadius = 4.f;
-constexpr float kRotateSnapRadians = 0.2617994f;
-constexpr float kScaleSnapStep     = 0.1f;
-constexpr float kMinScaleFactor    = 0.01f;
-constexpr float kRadiansToDegrees  = 57.2957795f;
-
-constexpr std::uint32_t kImGuiDescriptorPoolSize = 64;
-
-void checkVkResult(VkResult err)
+fs::path layoutSettingsPath()
 {
-    if (err != VK_SUCCESS)
-        std::fprintf(stderr, "[zio_editor] Vulkan error in Dear ImGui backend: %d\n", static_cast<int>(err));
+    const char* appData = std::getenv("APPDATA");
+    if (!appData || !*appData)
+        return {};
+    return fs::path(appData) / "ZioEditor" / "disposicion_ui.txt";
 }
 
-void copyText(char* dest, std::size_t capacity, const std::string& text)
-{
-    std::snprintf(dest, capacity, "%s", text.c_str());
 }
 
-std::string describe(const Action& action)
+EditorApp::EditorApp()
+    : viewport_(context_), hierarchy_(*this), inspector_(*this), files_(*this), performance_(*this)
 {
+}
+
+EditorApp::~EditorApp() = default;
+
+bool EditorApp::onInit()
+{
+    ui_ = std::make_unique<zio::ui::Context>();
+    if (auto font = zio::ui::createSystemFont("Segoe UI", 17.f))
+        ui_->theme().font = font;
+    if (auto bold = zio::ui::createSystemFont("Segoe UI", 17.f, true))
+        ui_->theme().fontBold = bold;
+    host_ = std::make_unique<zio::ui::EngineHost>(*ui_);
+
+    recentFile_ = recentProjectFile();
+    layoutFile_ = layoutSettingsPath();
+
+    buildUi();
+
+    if (!layoutFile_.empty())
+    {
+        std::ifstream in(layoutFile_, std::ios::binary);
+        if (in)
+        {
+            std::stringstream buffer;
+            buffer << in.rdbuf();
+            dock_->loadLayout(buffer.str());
+        }
+    }
+
+    viewport_.setContextMenuHandler([this](zio::ui::Vec2 position) {
+        std::vector<MenuItem> items;
+        items.push_back(MenuItem::submenuItem("Añadir objeto", addObjectItems()));
+        items.push_back(MenuItem::line());
+        for (MenuItem& item : editItems())
+            items.push_back(std::move(item));
+        MenuItem remove = MenuItem::item("Eliminar", [this]() { context_.removeSelected(); }, "Supr");
+        remove.enabled  = !context_.selectionRoots().empty();
+        items.push_back(MenuItem::line());
+        items.push_back(std::move(remove));
+        showPopup(std::move(items), position);
+    });
+
+    keyListener_ = zio::events::EventBus::instance().onKey([this](const zio::events::KeyEvent& e) { handleKey(e); });
+
+    if (Updater::enabled())
+    {
+        Updater::cleanupLeftovers();
+        updater_.start();
+    }
+
+    openInitialProject();
+    lastTick_ = std::chrono::steady_clock::now();
+    return true;
+}
+
+void EditorApp::openInitialProject()
+{
+    std::string error;
+    if (!startupProject_.empty())
+    {
+        if (!context_.openProject(startupProject_, &error))
+            statusErrorText_ = error;
+        return;
+    }
+    if (const auto recent = readRecentProject(recentFile_))
+        if (!context_.openProject(*recent, &error))
+            statusErrorText_ = "No se pudo reabrir el último proyecto: " + error;
+}
+
+void EditorApp::onShutdown()
+{
+    saveLayout();
+    if (keyListener_ != zio::events::kInvalidListenerId)
+        zio::events::EventBus::instance().unsubscribe(keyListener_);
+    updater_.finish(restartAfterClose_);
+    host_.reset();
+    ui_.reset();
+}
+
+void EditorApp::saveLayout()
+{
+    if (layoutFile_.empty() || !dock_)
+        return;
+    std::error_code ec;
+    fs::create_directories(layoutFile_.parent_path(), ec);
+    std::ofstream out(layoutFile_, std::ios::binary | std::ios::trunc);
+    if (out)
+        out << dock_->saveLayout();
+}
+
+bool EditorApp::onCloseRequested()
+{
+    if (!context_.hasPending())
+        context_.request(Action{ActionKind::CloseWindow, {}, {}});
+    if (context_.closeApproved())
+        return true;
+    if (context_.hasPending() && !unsavedOpen_)
+        showUnsaved();
+    return false;
+}
+
+void EditorApp::rememberProject()
+{
+    if (!context_.project().isOpen() || context_.project().rootDir() == rememberedProject_)
+        return;
+    rememberedProject_ = context_.project().rootDir();
+    writeRecentProject(recentFile_, rememberedProject_);
+}
+
+void EditorApp::togglePlay()
+{
+    if (context_.playing())
+        context_.stopPlay();
+    else if (context_.project().isOpen())
+        context_.startPlay();
+}
+
+void EditorApp::saveCurrentScene()
+{
+    if (!context_.project().isOpen() || context_.playing())
+        return;
+    if (context_.canSave())
+        context_.saveScene();
+    else
+        showSaveAs();
+}
+
+bool EditorApp::textFocused() const
+{
+    zio::ui::Widget* focused = ui_->focused();
+    return dynamic_cast<zio::ui::LineEdit*>(focused) || dynamic_cast<zio::ui::TextEdit*>(focused) ||
+           dynamic_cast<zio::ui::NumberEdit*>(focused);
+}
+
+void EditorApp::handleKey(const zio::events::KeyEvent& event)
+{
+    using zio::events::KeyCode;
+    switch (event.code)
+    {
+    case KeyCode::LeftCtrl:
+    case KeyCode::RightCtrl:
+        ctrl_ = event.down;
+        return;
+    case KeyCode::LeftShift:
+    case KeyCode::RightShift:
+        shift_ = event.down;
+        return;
+    default:
+        break;
+    }
+    if (!event.down)
+        return;
+
+    if (ctrl_ && event.code == KeyCode::S && !context_.hasPending() && !ui_->hasPopups())
+    {
+        saveCurrentScene();
+        return;
+    }
+    if (event.code == KeyCode::F5 && !event.repeat && !context_.hasPending() && !ui_->hasPopups())
+    {
+        togglePlay();
+        return;
+    }
+    if (ui_->hasPopups() || context_.hasPending() || textFocused())
+        return;
+
+    if (ctrl_)
+    {
+        switch (event.code)
+        {
+        case KeyCode::Z:
+            shift_ ? context_.redo() : context_.undo();
+            break;
+        case KeyCode::Y:
+            context_.redo();
+            break;
+        case KeyCode::C:
+            context_.copySelection();
+            break;
+        case KeyCode::V:
+            context_.paste();
+            break;
+        case KeyCode::D:
+            context_.duplicateSelection();
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
+    switch (event.code)
+    {
+    case KeyCode::Num1:
+        viewport_.setMode(GizmoMode::Move);
+        break;
+    case KeyCode::Num2:
+        viewport_.setMode(GizmoMode::Rotate);
+        break;
+    case KeyCode::Num3:
+        viewport_.setMode(GizmoMode::Scale);
+        break;
+    case KeyCode::F:
+        viewport_.focusSelection();
+        break;
+    case KeyCode::Escape:
+        context_.clearSelection();
+        break;
+    case KeyCode::Delete:
+        context_.removeSelected();
+        break;
+    default:
+        break;
+    }
+}
+
+std::vector<MenuItem> EditorApp::addObjectItems()
+{
+    const bool enabled = context_.project().isOpen() && !context_.playing();
+    std::vector<MenuItem> items;
+
+    MenuItem empty = MenuItem::item("Nodo vacío", [this]() { context_.addNode(NewNodeKind::Empty); });
+    empty.enabled  = enabled;
+    items.push_back(std::move(empty));
+
+    MenuItem cube = MenuItem::item("Cubo", [this]() { context_.addNode(NewNodeKind::Cube); });
+    cube.enabled  = enabled;
+    items.push_back(std::move(cube));
+
+    std::vector<MenuItem> meshes;
+    for (const std::string& mesh : context_.meshAssets())
+        meshes.push_back(MenuItem::item(mesh, [this, mesh]() { context_.addNode(NewNodeKind::Mesh, mesh); }));
+    if (meshes.empty())
+    {
+        MenuItem none = MenuItem::item("No hay .obj en assets/models");
+        none.enabled  = false;
+        meshes.push_back(std::move(none));
+    }
+    MenuItem submenu = MenuItem::submenuItem("Malla (.obj)", std::move(meshes));
+    submenu.enabled  = enabled;
+    items.push_back(std::move(submenu));
+    return items;
+}
+
+std::vector<MenuItem> EditorApp::editItems()
+{
+    const bool hasSelection = !context_.selectionRoots().empty();
+    std::vector<MenuItem> items;
+
+    MenuItem copy = MenuItem::item("Copiar", [this]() { context_.copySelection(); }, "Ctrl+C");
+    copy.enabled  = hasSelection;
+    items.push_back(std::move(copy));
+
+    MenuItem paste = MenuItem::item("Pegar", [this]() { context_.paste(); }, "Ctrl+V");
+    paste.enabled  = context_.canPaste();
+    items.push_back(std::move(paste));
+
+    MenuItem duplicate = MenuItem::item("Duplicar", [this]() { context_.duplicateSelection(); }, "Ctrl+D");
+    duplicate.enabled  = hasSelection;
+    items.push_back(std::move(duplicate));
+
+    items.push_back(MenuItem::line());
+
+    MenuItem undo = MenuItem::item("Deshacer", [this]() { context_.undo(); }, "Ctrl+Z");
+    undo.enabled  = context_.canUndo();
+    items.push_back(std::move(undo));
+
+    MenuItem redo = MenuItem::item("Rehacer", [this]() { context_.redo(); }, "Ctrl+Y");
+    redo.enabled  = context_.canRedo();
+    items.push_back(std::move(redo));
+    return items;
+}
+
+void EditorApp::showPopup(std::vector<MenuItem> items, zio::ui::Vec2 position)
+{
+    ui_->closePopups();
+    auto popup = std::make_unique<zio::ui::PopupMenu>(std::move(items));
+    popup->setAnchor(position);
+    ui_->openPopup(std::move(popup));
+}
+
+std::vector<MenuItem> EditorApp::projectItems()
+{
+    return {MenuItem::item("Nuevo proyecto...", [this]() { showNewProject(); }),
+            MenuItem::item("Abrir proyecto...", [this]() { showOpenProject(); })};
+}
+
+std::vector<MenuItem> EditorApp::sceneItems()
+{
+    const bool enabled = context_.project().isOpen() && !context_.playing();
+    MenuItem save      = MenuItem::item("Guardar", [this]() { saveCurrentScene(); }, "Ctrl+S");
+    save.enabled       = enabled;
+    MenuItem saveAs    = MenuItem::item("Guardar como...", [this]() { showSaveAs(); });
+    saveAs.enabled     = enabled;
+    return {std::move(save), std::move(saveAs)};
+}
+
+std::vector<MenuItem> EditorApp::sideItems(const std::string& id)
+{
+    std::vector<MenuItem> items;
+    const std::pair<const char*, zio::ui::DockSide> sides[] = {{"Izquierda", zio::ui::DockSide::Left},
+                                                                {"Derecha", zio::ui::DockSide::Right},
+                                                                {"Abajo", zio::ui::DockSide::Bottom}};
+    for (const auto& [name, side] : sides)
+    {
+        items.push_back(MenuItem::check(name, dock_->sideOf(id) == side, [this, id, side = side]() {
+            dock_->movePanel(id, side);
+            saveLayout();
+        }));
+    }
+    return items;
+}
+
+std::vector<MenuItem> EditorApp::viewItems()
+{
+    std::vector<MenuItem> panels;
+    panels.push_back(MenuItem::submenuItem("Jerarquía", sideItems("jerarquia")));
+    panels.push_back(MenuItem::submenuItem("Archivos", sideItems("archivos")));
+    panels.push_back(MenuItem::submenuItem("Inspector", sideItems("inspector")));
+    panels.push_back(MenuItem::submenuItem("Rendimiento", sideItems("rendimiento")));
+    return {MenuItem::submenuItem("Posición de los paneles", std::move(panels)), MenuItem::line(),
+            MenuItem::item("Restablecer disposición", [this]() {
+                dock_->movePanel("jerarquia", zio::ui::DockSide::Left);
+                dock_->movePanel("archivos", zio::ui::DockSide::Left);
+                dock_->movePanel("inspector", zio::ui::DockSide::Right);
+                dock_->movePanel("rendimiento", zio::ui::DockSide::Bottom);
+                dock_->setFractions(0.24f, 0.26f, 0.24f);
+                saveLayout();
+            })};
+}
+
+void EditorApp::buildTopBar(zio::ui::Widget* page)
+{
+    const zio::ui::Theme& theme = ui_->theme();
+    auto* bar                   = page->add<zio::ui::Panel>();
+    bar->setBackground(theme.deep);
+    bar->setPadding(zio::ui::Edges::symmetric(6.f, 0.f));
+    auto* row  = bar->add<zio::ui::HBox>();
+    auto* menu = row->add<zio::ui::MenuBar>();
+    menu->addMenu("Proyecto", [this]() { return projectItems(); });
+    menu->addMenu("Escena", [this]() { return sceneItems(); });
+    menu->addMenu("Editar", [this]() { return editItems(); });
+    menu->addMenu("Objeto", [this]() { return addObjectItems(); });
+    menu->addMenu("Ver", [this]() { return viewItems(); });
+
+    row->add<zio::ui::Widget>()->setExpand(true, false);
+    play_ = row->add<ToolButton>(ToolIcon::Play, 28.f);
+    play_->setTooltip("Jugar (F5)");
+    play_->setOnClick([this]() {
+        if (!context_.playing())
+            togglePlay();
+    });
+    stop_ = row->add<ToolButton>(ToolIcon::Stop, 28.f);
+    stop_->setTooltip("Detener (F5)");
+    stop_->setOnClick([this]() {
+        if (context_.playing())
+            togglePlay();
+    });
+    row->add<zio::ui::Widget>()->setExpand(true, false);
+}
+
+void EditorApp::buildStatusBar(zio::ui::Widget* page)
+{
+    const zio::ui::Theme& theme = ui_->theme();
+    auto* bar                   = page->add<zio::ui::Panel>();
+    bar->setBackground(theme.deep);
+    bar->setPadding(zio::ui::Edges::symmetric(12.f, 2.f));
+    auto* row = bar->add<zio::ui::HBox>();
+    row->setSeparation(12.f);
+
+    statusScene_ = row->add<zio::ui::Label>(std::string());
+    statusScene_->setColor(theme.textDim);
+    statusError_ = row->add<zio::ui::Label>(std::string());
+    statusError_->setColor(theme.danger);
+
+    updateText_ = row->add<zio::ui::Label>(std::string());
+    updateText_->setColor(theme.accentHover);
+    updateProgress_ = row->add<zio::ui::ProgressBar>();
+    updateProgress_->setMinSize({160.f, 8.f});
+    updateButton_ = row->add<zio::ui::Button>(std::string());
+    updateButton_->setMinSize({0.f, 24.f});
+
+    row->add<zio::ui::Widget>()->setExpand(true, false);
+    statusRight_ = row->add<zio::ui::Label>(std::string());
+    statusRight_->setColor(theme.textDim);
+}
+
+void EditorApp::buildUi()
+{
+    auto* page = ui_->root().add<zio::ui::VBox>();
+    page->setSeparation(0.f);
+
+    buildTopBar(page);
+
+    dock_ = page->add<zio::ui::DockSpace>();
+    dock_->setExpand(true, true);
+    dock_->setCenter(viewport_.build());
+    dock_->addPanel("jerarquia", "Jerarquía", hierarchy_.build(), zio::ui::DockSide::Left);
+    dock_->addPanel("archivos", "Archivos", files_.build(), zio::ui::DockSide::Left);
+    dock_->addPanel("inspector", "Inspector", inspector_.build(), zio::ui::DockSide::Right);
+    dock_->addPanel("rendimiento", "Rendimiento", performance_.build(), zio::ui::DockSide::Bottom);
+    dock_->setFractions(0.24f, 0.26f, 0.24f);
+
+    buildStatusBar(page);
+}
+
+void EditorApp::refreshUpdate()
+{
+    const UpdateStatus update = updater_.status();
+    const bool show           = Updater::enabled() && update.state != UpdateState::Idle && update.state != UpdateState::Checking;
+
+    updateText_->setVisible(show);
+    updateButton_->setVisible(show && update.state != UpdateState::Downloading);
+    updateProgress_->setVisible(show && update.state == UpdateState::Downloading);
+    if (!show)
+        return;
+
+    switch (update.state)
+    {
+    case UpdateState::Available:
+        updateText_->setText("Actualización disponible: v" + update.version);
+        updateButton_->setText("Descargar");
+        updateButton_->setOnClick([this]() { updater_.download(); });
+        break;
+    case UpdateState::Downloading:
+        updateText_->setText("Descargando v" + update.version);
+        updateProgress_->setValue(update.progress);
+        break;
+    case UpdateState::Downloaded:
+        updateText_->setText("Zio v" + update.version + " lista para instalar");
+        updateButton_->setText("Reiniciar y actualizar");
+        updateButton_->setOnClick([this]() {
+            if (context_.hasPending())
+                return;
+            restartAfterClose_ = true;
+            context_.request(Action{ActionKind::CloseWindow, {}, {}});
+        });
+        break;
+    case UpdateState::Error:
+        updateText_->setText(update.error);
+        updateButton_->setText("Reintentar");
+        updateButton_->setOnClick([this]() { updater_.retry(); });
+        break;
+    default:
+        break;
+    }
+}
+
+void EditorApp::refreshStatus()
+{
+    std::string text;
+    if (context_.project().isOpen())
+    {
+        const std::string& scene = context_.currentScene();
+        text                     = context_.project().name() + "  /  " + (scene.empty() ? "(sin escena)" : scene) +
+               (context_.isDirty() ? " *" : "");
+        if (context_.selection().size() > 1)
+            text += "   " + std::to_string(context_.selection().size()) + " seleccionados";
+    }
+    else
+    {
+        text = "Sin proyecto: crea o abre uno desde el menú Proyecto";
+    }
+    statusScene_->setText(text);
+
+    const std::string& error = context_.lastError().empty() ? statusErrorText_ : context_.lastError();
+    statusError_->setText(error);
+
+    char right[96];
+    const float fps = frameMs_ > 0.f ? 1000.f / frameMs_ : 0.f;
+    std::snprintf(right, sizeof(right), "%.0f FPS    Zio v%s", fps, ZIO_VERSION);
+    statusRight_->setText(right);
+
+    play_->setActive(context_.playing());
+    stop_->setActive(context_.playing());
+    play_->setEnabled(context_.project().isOpen());
+    stop_->setEnabled(context_.project().isOpen());
+    refreshUpdate();
+}
+
+void EditorApp::onBeforeTick(float dt)
+{
+    (void)dt;
+    const auto now = std::chrono::steady_clock::now();
+    realDt_        = std::min(std::chrono::duration<float>(now - lastTick_).count(), kFrameClamp);
+    lastTick_      = now;
+    frameMs_       = frameMs_ * 0.9f + realDt_ * 1000.f * 0.1f;
+
+    if (context_.closeApproved())
+    {
+        requestExit();
+        return;
+    }
+    if (context_.hasPending() && !unsavedOpen_)
+        showUnsaved();
+    rememberProject();
+
+    hierarchy_.refresh();
+    inspector_.refresh();
+    files_.refresh(realDt_);
+    performance_.refresh(realDt_);
+    refreshStatus();
+
+    viewport_.update(realDt_, ui_->hasPopups() || textFocused());
+
+    auto& input = zio::input::InputManager::instance();
+    if (!input.isMouseButtonDown(zio::events::MouseButton::Left) && !viewport_.dragging())
+        context_.commitHistory();
+
+    host_->frame(realDt_);
+}
+
+void EditorApp::onRender(float dt)
+{
+    (void)dt;
+    auto& device = zio::render::Device::instance();
+    device.beginFrame(zio::render::ClearColor{0.059f, 0.067f, 0.090f, 1.f});
+
+    viewport_.render(realDt_);
+
+    auto& window = zio::platform::Window::instance();
+    zio::renderer::BatchRenderer::instance().begin(window.width(), window.height());
+    host_->draw();
+    zio::renderer::BatchRenderer::instance().end();
+
+    device.endFrame();
+}
+
+std::string EditorApp::describePending() const
+{
+    if (!context_.hasPending())
+        return {};
+    const Action& action = context_.pending();
     switch (action.kind)
     {
     case ActionKind::OpenScene:
@@ -82,1096 +587,153 @@ std::string describe(const Action& action)
     }
     return {};
 }
-}
 
-EditorApp::EditorApp() : window_(std::make_unique<EditorWindow>())
+void EditorApp::showNewProject()
 {
-    const std::filesystem::path launchDir = std::filesystem::current_path();
-    imguiIniPath_                         = (launchDir / "imgui.ini").string();
-    copyText(newProjectParent_, sizeof(newProjectParent_), launchDir.string());
+    using namespace zio::ui;
+    auto dialog  = std::make_unique<Dialog>("Nuevo proyecto");
+    auto content = std::make_unique<VBox>();
+    content->add<Label>(std::string("Carpeta padre"));
+    auto* parent = content->add<LineEdit>();
+    std::error_code ec;
+    parent->setText(fs::current_path(ec).string());
+    content->add<Label>(std::string("Nombre"));
+    auto* name  = content->add<LineEdit>();
+    auto* error = content->add<Label>(std::string());
+    error->setColor(ui_->theme().danger);
+    dialog->setContent(std::move(content));
 
-    recentFile_ = recentProjectFile();
-    layoutFile_ = layoutSettingsFile();
-    layout_     = readLayoutSettings(layoutFile_);
-    if (const auto recent = readRecentProject(recentFile_))
-        copyText(openProjectPath_, sizeof(openProjectPath_), recent->string());
-}
-
-EditorApp::~EditorApp()
-{
-    if (ImGui::GetCurrentContext())
-    {
-        ImGui_ImplVulkan_Shutdown();
-        ImGui_ImplWin32_Shutdown();
-        ImGui::DestroyContext();
-    }
-    zio::render::Device::instance().shutdown();
-    window_->destroy();
-}
-
-void EditorApp::openProjectAtStartup(const std::filesystem::path& path)
-{
-    std::string error;
-    if (!context_.openProject(path, &error))
-    {
-        statusError_ = error;
-        std::fprintf(stderr, "[zio_editor] %s\n", error.c_str());
-    }
-}
-
-void EditorApp::openRecentProject()
-{
-    const auto recent = readRecentProject(recentFile_);
-    if (!recent)
-        return;
-
-    std::string error;
-    if (!context_.openProject(*recent, &error))
-        statusError_ = "No se pudo reabrir el último proyecto: " + error;
-}
-
-void EditorApp::rememberProject()
-{
-    if (!context_.project().isOpen() || context_.project().rootDir() == rememberedProject_)
-        return;
-    rememberedProject_ = context_.project().rootDir();
-    writeRecentProject(recentFile_, rememberedProject_);
-}
-
-void EditorApp::run()
-{
-    if (!window_->create("Editor de Zio", kInitialWidth, kInitialHeight))
-        return;
-
-    auto& device = zio::render::Device::instance();
-    if (!device.init(window_->nativeHandle(), kInitialWidth, kInitialHeight))
-        return;
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.IniFilename = imguiIniPath_.c_str();
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    applyZioTheme();
-    loadEditorFonts();
-
-    ImGui_ImplWin32_Init(window_->nativeHandle());
-    ImGui_ImplVulkan_InitInfo initInfo{};
-    initInfo.ApiVersion            = VK_API_VERSION_1_1;
-    initInfo.Instance              = static_cast<VkInstance>(device.nativeInstance());
-    initInfo.PhysicalDevice        = static_cast<VkPhysicalDevice>(device.nativePhysicalDevice());
-    initInfo.Device                = static_cast<VkDevice>(device.nativeDevice());
-    initInfo.QueueFamily           = device.nativeQueueFamily();
-    initInfo.Queue                 = static_cast<VkQueue>(device.nativeQueue());
-    initInfo.DescriptorPoolSize    = kImGuiDescriptorPoolSize;
-    initInfo.MinImageCount         = device.swapchainImageCount();
-    initInfo.ImageCount            = device.swapchainImageCount();
-    initInfo.PipelineInfoMain.RenderPass = static_cast<VkRenderPass>(device.nativeRenderPass());
-    initInfo.CheckVkResultFn       = &checkVkResult;
-    ImGui_ImplVulkan_Init(&initInfo);
-
-    if (Updater::enabled())
-    {
-        Updater::cleanupLeftovers();
-        updater_.start();
-    }
-
-    auto lastFrameStart = std::chrono::steady_clock::now();
-    float frameTimeMs    = 0.f;
-
-    while (!context_.closeApproved())
-    {
-        window_->pumpMessages();
-        if (window_->closeRequested())
+    Dialog* raw = dialog.get();
+    auto confirm = [this, raw, parent, name, error]() {
+        const std::string parentText = parent->text();
+        const std::string nameText   = name->text();
+        std::string problem;
+        if (!ProjectManager::checkNewProject(parentText, nameText, &problem))
         {
-            window_->cancelClose();
-            if (!context_.hasPending())
-                context_.request(Action{ActionKind::CloseWindow, {}, {}});
-            if (context_.closeApproved())
-                break;
-        }
-
-        if (window_->resized())
-        {
-            device.resize(window_->width(), window_->height());
-            window_->consumeResized();
-        }
-
-        ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
-
-        drawUi(frameTimeMs);
-        rememberProject();
-        updateViewportCamera();
-        handleViewportInput();
-        drawViewportContextMenu();
-        if (!ImGui::IsAnyItemActive() && !dragging())
-            context_.commitHistory();
-
-        ImGui::Render();
-
-        device.beginFrame(zio::render::ClearColor{0.059f, 0.067f, 0.090f, 1.f});
-
-        renderScene();
-
-        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), static_cast<VkCommandBuffer>(device.nativeContext()));
-
-        device.endFrame();
-
-        const auto frameEnd = std::chrono::steady_clock::now();
-        frameTimeMs          = std::chrono::duration<float, std::milli>(frameEnd - lastFrameStart).count();
-        lastFrameStart        = frameEnd;
-    }
-
-    updater_.finish(restartAfterClose_);
-}
-
-void EditorApp::renderScene()
-{
-    auto& scene    = context_.scene();
-    auto& renderer = zio::scene3d::Renderer3D::instance();
-
-    if (context_.playing())
-    {
-        scene.update(std::min(ImGui::GetIO().DeltaTime, kMaxFrameTime));
-        if (viewRect_.w < 1.f || viewRect_.h < 1.f)
+            error->setText(problem);
             return;
-        renderer.begin(scene.camera(), scene.light(), static_cast<std::uint32_t>(viewRect_.w),
-                       static_cast<std::uint32_t>(viewRect_.h), static_cast<std::uint32_t>(viewRect_.x),
-                       static_cast<std::uint32_t>(viewRect_.y));
-        scene.root().visit(renderer);
-        renderer.end();
-        return;
-    }
-
-    scene.update(0.f);
-
-    if (viewRect_.w < 1.f || viewRect_.h < 1.f)
-        return;
-
-    const zio::scene3d::Camera camera = editorCamera_.toCamera(scene.camera());
-    renderer.begin(camera, scene.light(), static_cast<std::uint32_t>(viewRect_.w),
-                   static_cast<std::uint32_t>(viewRect_.h), static_cast<std::uint32_t>(viewRect_.x),
-                   static_cast<std::uint32_t>(viewRect_.y));
-    drawGrid(renderer, editorCamera_.target(), editorCamera_.distance());
-    scene.root().visit(renderer);
-    for (const zio::scene3d::Node3D* node : context_.selection())
-        if (node != context_.selected())
-            drawSelectionBox(renderer, *node);
-    if (const zio::scene3d::Node3D* selected = context_.selected())
-        drawSelection(renderer, *selected, camera.position, hoveredAxis_, activeAxis(), gizmoMode_);
-    renderer.end();
-}
-
-bool EditorApp::beginGizmoDrag(zio::scene3d::Node3D& node, const GizmoAxes& axes, int axis, const Ray& ray)
-{
-    const zio::math::Vec3 direction = axes.direction[axis];
-    bool started                    = false;
-    if (gizmoMode_ == GizmoMode::Rotate)
-    {
-        started        = rotateDrag_.begin(axis, axes.origin, direction, ray);
-        startRotation_ = node.rotation();
-    }
-    else
-    {
-        started        = gizmoDrag_.begin(axis, axes.origin, direction, ray);
-        startScale_    = node.scale();
-        startLength_   = axes.length;
-        dragOrigin_    = axes.origin;
-        dragDirection_ = direction;
-    }
-    groupStart_.clear();
-    if (started && gizmoMode_ == GizmoMode::Move)
-    {
-        const auto roots = context_.selectionRoots();
-        if (std::find(roots.begin(), roots.end(), &node) != roots.end())
-            for (zio::scene3d::Node3D* other : roots)
-                if (other != &node)
-                    groupStart_.emplace_back(other, other->worldMatrix().transformPoint(zio::math::Vec3::zero()));
-    }
-    if (started)
-        dragNode_ = &node;
-    return started;
-}
-
-void EditorApp::endGizmoDrag()
-{
-    gizmoDrag_.end();
-    rotateDrag_.end();
-    dragNode_ = nullptr;
-    groupStart_.clear();
-}
-
-void EditorApp::applyGizmoDrag(const Ray& ray, bool snap)
-{
-    if (!dragNode_)
-        return;
-
-    if (gizmoMode_ == GizmoMode::Rotate)
-    {
-        if (const auto angle = rotateDrag_.update(ray, snap ? kRotateSnapRadians : 0.f))
-        {
-            zio::math::Vec3 unit = zio::math::Vec3::unitX();
-            if (rotateDrag_.axis() == 1)
-                unit = zio::math::Vec3::unitY();
-            else if (rotateDrag_.axis() == 2)
-                unit = zio::math::Vec3::unitZ();
-            dragNode_->setRotation(
-                (startRotation_ * zio::math::Quaternion::fromAxisAngle(unit, *angle * kRadiansToDegrees)).normalized());
-            context_.markDirty();
         }
-        return;
-    }
-
-    const auto position = gizmoDrag_.update(ray, gizmoMode_ == GizmoMode::Move && snap ? kSnapStep : 0.f);
-    if (!position)
-        return;
-
-    if (gizmoMode_ == GizmoMode::Move)
-    {
-        dragNode_->setPosition(localPositionFor(*dragNode_, *position));
-        const zio::math::Vec3 delta = *position - dragOrigin_;
-        for (const auto& [other, start] : groupStart_)
-            other->setPosition(localPositionFor(*other, start + delta));
-    }
-    else
-    {
-        float factor = 1.f + (*position - dragOrigin_).dot(dragDirection_) / startLength_;
-        if (snap)
-            factor = std::round(factor / kScaleSnapStep) * kScaleSnapStep;
-        factor = std::max(factor, kMinScaleFactor);
-
-        zio::math::Vec3 scale = startScale_;
-        switch (gizmoDrag_.axis())
-        {
-        case 0:
-            scale.x *= factor;
-            break;
-        case 1:
-            scale.y *= factor;
-            break;
-        default:
-            scale.z *= factor;
-            break;
-        }
-        dragNode_->setScale(scale);
-    }
-    context_.markDirty();
-}
-
-void EditorApp::handleViewportInput()
-{
-    ImGuiIO& io        = ImGui::GetIO();
-    const float width  = viewRect_.w;
-    const float height = viewRect_.h;
-    if (!(width > 1.f) || !(height > 1.f))
-        return;
-    const float mouseX = io.MousePos.x - viewRect_.x;
-    const float mouseY = io.MousePos.y - viewRect_.y;
-
-    if (context_.playing())
-    {
-        if (dragging())
-            endGizmoDrag();
-        hoveredAxis_ = -1;
-        return;
-    }
-
-    zio::scene3d::Node3D* selected    = context_.selected();
-    const zio::scene3d::Camera camera = editorCamera_.toCamera(context_.scene().camera());
-    const Ray ray = makeRay(camera, width / height, 2.f * mouseX / width - 1.f, 1.f - 2.f * mouseY / height);
-
-    if (dragging() && (!selected || selected != dragNode_))
-        endGizmoDrag();
-
-    if (dragging())
-    {
-        if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
-            applyGizmoDrag(ray, io.KeyCtrl);
-        else
-            endGizmoDrag();
-        hoveredAxis_ = activeAxis();
-        return;
-    }
-
-    const bool insideView   = viewRect_.contains(io.MousePos.x, io.MousePos.y);
-    const bool overViewport = !io.WantCaptureMouse && insideView && cameraDrag_ == CameraDrag::None;
-    hoveredAxis_            = -1;
-    GizmoAxes axes;
-    if (selected && overViewport)
-    {
-        axes         = computeGizmoAxes(*selected, camera.position);
-        hoveredAxis_ = gizmoMode_ == GizmoMode::Rotate
-                           ? hitTestRings(camera, width, height, axes, mouseX, mouseY)
-                           : hitTestGizmo(camera, width, height, axes, mouseX, mouseY);
-    }
-
-    if (!io.WantCaptureMouse && insideView && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-    {
-        if (!(hoveredAxis_ >= 0 && beginGizmoDrag(*selected, axes, hoveredAxis_, ray)))
-        {
-            zio::scene3d::Node3D* hit = pickNode(context_.scene().root(), ray);
-            if (io.KeyCtrl)
-                context_.toggleSelect(hit);
-            else
-                context_.select(hit);
-        }
-    }
-
-    handleViewportKeys();
-}
-
-void EditorApp::focusSelection()
-{
-    const zio::scene3d::Node3D* selected = context_.selected();
-    if (!selected)
-        return;
-    zio::math::Vec3 center;
-    float radius = 1.f;
-    selectionFocus(*selected, center, radius);
-    editorCamera_.focus(center, std::max(radius * kFocusDistance, kMinFocus));
-}
-
-void EditorApp::drawViewportContextMenu()
-{
-    constexpr const char* kPopupId = "##menu_visor";
-    if (openViewportMenu_)
-    {
-        openViewportMenu_ = false;
-        ImGuiIO& io       = ImGui::GetIO();
-        const float width  = viewRect_.w;
-        const float height = viewRect_.h;
-        if (width > 1.f && height > 1.f && !context_.hasPending() &&
-            !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
-        {
-            const zio::scene3d::Camera camera = editorCamera_.toCamera(context_.scene().camera());
-            const Ray ray = makeRay(camera, width / height, 2.f * (io.MousePos.x - viewRect_.x) / width - 1.f,
-                                    1.f - 2.f * (io.MousePos.y - viewRect_.y) / height);
-            if (zio::scene3d::Node3D* hit = pickNode(context_.scene().root(), ray))
-                context_.select(hit);
-            ImGui::OpenPopup(kPopupId);
-        }
-    }
-
-    if (!ImGui::BeginPopup(kPopupId))
-        return;
-
-    if (ImGui::BeginMenu("Añadir objeto"))
-    {
-        drawAddObjectItems(context_);
-        ImGui::EndMenu();
-    }
-
-    ImGui::Separator();
-    if (ImGui::MenuItem("Mover", "1", gizmoMode_ == GizmoMode::Move))
-        gizmoMode_ = GizmoMode::Move;
-    if (ImGui::MenuItem("Rotar", "2", gizmoMode_ == GizmoMode::Rotate))
-        gizmoMode_ = GizmoMode::Rotate;
-    if (ImGui::MenuItem("Escalar", "3", gizmoMode_ == GizmoMode::Scale))
-        gizmoMode_ = GizmoMode::Scale;
-
-    const zio::scene3d::Node3D* selected = context_.selected();
-    if (selected)
-    {
-        ImGui::Separator();
-        if (ImGui::MenuItem("Enfocar", "F"))
-            focusSelection();
-        if (ImGui::MenuItem("Deseleccionar", "Esc"))
-            context_.clearSelection();
-        if (ImGui::MenuItem("Eliminar", "Supr", false, selected != &context_.scene().root()))
-            context_.removeSelected();
-    }
-
-    ImGui::Separator();
-    drawEditItems();
-    ImGui::EndPopup();
-}
-
-void EditorApp::drawEditItems()
-{
-    const bool hasSelection = !context_.selectionRoots().empty();
-    if (ImGui::MenuItem("Copiar", "Ctrl+C", false, hasSelection))
-        context_.copySelection();
-    if (ImGui::MenuItem("Pegar", "Ctrl+V", false, context_.canPaste()))
-        context_.paste();
-    if (ImGui::MenuItem("Duplicar", "Ctrl+D", false, hasSelection))
-        context_.duplicateSelection();
-    ImGui::Separator();
-    if (ImGui::MenuItem("Deshacer", "Ctrl+Z", false, context_.canUndo()))
-        context_.undo();
-    if (ImGui::MenuItem("Rehacer", "Ctrl+Y", false, context_.canRedo()))
-        context_.redo();
-}
-
-void EditorApp::togglePlay()
-{
-    if (context_.playing())
-        context_.stopPlay();
-    else if (context_.project().isOpen())
-        context_.startPlay();
-}
-
-void EditorApp::handleViewportKeys()
-{
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantTextInput || io.WantCaptureMouse || context_.hasPending() ||
-        ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
-        return;
-
-    if (!io.KeyCtrl && !io.KeyAlt)
-    {
-        float forward = 0.f, right = 0.f, up = 0.f;
-        if (ImGui::IsKeyDown(ImGuiKey_W))
-            forward += 1.f;
-        if (ImGui::IsKeyDown(ImGuiKey_S))
-            forward -= 1.f;
-        if (ImGui::IsKeyDown(ImGuiKey_D))
-            right += 1.f;
-        if (ImGui::IsKeyDown(ImGuiKey_A))
-            right -= 1.f;
-        if (ImGui::IsKeyDown(ImGuiKey_E))
-            up += 1.f;
-        if (ImGui::IsKeyDown(ImGuiKey_Q))
-            up -= 1.f;
-
-        if (forward != 0.f || right != 0.f || up != 0.f)
-        {
-            const float speed = std::max(kMinFlySpeed, editorCamera_.distance() * kFlySpeedPerDistance) *
-                                (io.KeyShift ? kFastMultiplier : 1.f) *
-                                std::min(io.DeltaTime, kMaxFrameTime);
-            editorCamera_.fly(forward * speed, right * speed, up * speed);
-        }
-    }
-
-    if (io.KeyCtrl && !io.KeyAlt)
-    {
-        if (ImGui::IsKeyPressed(ImGuiKey_Z, true))
-        {
-            if (io.KeyShift)
-                context_.redo();
-            else
-                context_.undo();
-        }
-        else if (ImGui::IsKeyPressed(ImGuiKey_Y, true))
-            context_.redo();
-        else if (ImGui::IsKeyPressed(ImGuiKey_C, false))
-            context_.copySelection();
-        else if (ImGui::IsKeyPressed(ImGuiKey_V, false))
-            context_.paste();
-        else if (ImGui::IsKeyPressed(ImGuiKey_D, false))
-            context_.duplicateSelection();
-        return;
-    }
-
-    if (ImGui::IsKeyPressed(ImGuiKey_1, false))
-        gizmoMode_ = GizmoMode::Move;
-    if (ImGui::IsKeyPressed(ImGuiKey_2, false))
-        gizmoMode_ = GizmoMode::Rotate;
-    if (ImGui::IsKeyPressed(ImGuiKey_3, false))
-        gizmoMode_ = GizmoMode::Scale;
-    if (ImGui::IsKeyPressed(ImGuiKey_F, false))
-        focusSelection();
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
-        context_.clearSelection();
-    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false))
-        context_.removeSelected();
-}
-
-void EditorApp::updateViewportCamera()
-{
-    if (context_.sceneRevision() != seenRevision_)
-    {
-        editorCamera_.resetFrom(context_.scene().camera());
-        seenRevision_ = context_.sceneRevision();
-        cameraDrag_   = CameraDrag::None;
-    }
-
-    if (context_.playing())
-    {
-        cameraDrag_ = CameraDrag::None;
-        return;
-    }
-
-    ImGuiIO& io       = ImGui::GetIO();
-    const bool overUi = io.WantCaptureMouse || !viewRect_.contains(io.MousePos.x, io.MousePos.y);
-
-    if (!overUi && cameraDrag_ == CameraDrag::None)
-    {
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right))
-        {
-            cameraDrag_  = CameraDrag::Orbit;
-            rightPressX_ = io.MousePos.x;
-            rightPressY_ = io.MousePos.y;
-        }
-        else if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
-            cameraDrag_ = CameraDrag::Pan;
-    }
-
-    if (cameraDrag_ != CameraDrag::None)
-    {
-        const ImGuiMouseButton button =
-            cameraDrag_ == CameraDrag::Orbit ? ImGuiMouseButton_Right : ImGuiMouseButton_Middle;
-        if (ImGui::IsMouseDown(button))
-        {
-            if (cameraDrag_ == CameraDrag::Orbit)
-                editorCamera_.orbit(io.MouseDelta.x, io.MouseDelta.y);
-            else
-                editorCamera_.pan(io.MouseDelta.x, io.MouseDelta.y);
-        }
-        else
-        {
-            if (cameraDrag_ == CameraDrag::Orbit)
-            {
-                const float dx = io.MousePos.x - rightPressX_;
-                const float dy = io.MousePos.y - rightPressY_;
-                if (dx * dx + dy * dy < kMenuClickRadius * kMenuClickRadius)
-                    openViewportMenu_ = true;
-            }
-            cameraDrag_ = CameraDrag::None;
-        }
-    }
-
-    if (!overUi && io.MouseWheel != 0.f)
-        editorCamera_.zoom(io.MouseWheel);
-}
-
-void EditorApp::saveCurrentScene()
-{
-    if (!context_.project().isOpen() || context_.playing())
-        return;
-    if (context_.canSave())
-        context_.saveScene();
-    else
-        wantSaveAsPopup_ = true;
-}
-
-void EditorApp::drawMenuBar()
-{
-    if (!ImGui::BeginMainMenuBar())
-        return;
-
-    const bool projectOpen = context_.project().isOpen();
-
-    if (ImGui::BeginMenu("Proyecto"))
-    {
-        if (ImGui::MenuItem("Nuevo proyecto..."))
-            wantNewProjectPopup_ = true;
-        if (ImGui::MenuItem("Abrir proyecto..."))
-            wantOpenProjectPopup_ = true;
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Escena"))
-    {
-        if (ImGui::MenuItem("Guardar", "Ctrl+S", false, projectOpen && !context_.playing()))
-            saveCurrentScene();
-        if (ImGui::MenuItem("Guardar como...", nullptr, false, projectOpen && !context_.playing()))
-            wantSaveAsPopup_ = true;
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Editar"))
-    {
-        drawEditItems();
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Objeto"))
-    {
-        drawAddObjectItems(context_);
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Ver"))
-    {
-        if (ImGui::BeginMenu("Posición de los paneles"))
-        {
-            for (int panel = 0; panel < PanelCount; ++panel)
-            {
-                if (!ImGui::BeginMenu(panelTitle(panel)))
-                    continue;
-                for (PanelSide side : {PanelSide::Left, PanelSide::Right, PanelSide::Bottom})
-                {
-                    if (ImGui::MenuItem(sideLabel(side), nullptr, layout_.side[panel] == side) &&
-                        layout_.side[panel] != side)
-                    {
-                        layout_.side[panel] = side;
-                        changeLayout();
-                    }
-                }
-                ImGui::EndMenu();
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::MenuItem("Interfaz fija", nullptr, layout_.locked))
-        {
-            layout_.locked = !layout_.locked;
-            writeLayoutSettings(layoutFile_, layout_);
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Restablecer disposición"))
-        {
-            const bool locked = layout_.locked;
-            layout_           = LayoutSettings{};
-            layout_.locked    = locked;
-            changeLayout();
-        }
-        ImGui::EndMenu();
-    }
-
-    const float size       = ImGui::GetFrameHeight() - 4.f;
-    const float groupWidth = size * 2.f + ImGui::GetStyle().ItemSpacing.x;
-    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - groupWidth) * 0.5f);
-
-    ImGui::BeginDisabled(!projectOpen);
-    if (iconButton("##jugar", Icon::Play, context_.playing(), "Jugar (F5)", size) && !context_.playing())
-        togglePlay();
-    ImGui::SameLine();
-    if (iconButton("##detener", Icon::Stop, context_.playing(), "Detener (F5)", size) && context_.playing())
-        togglePlay();
-    ImGui::EndDisabled();
-
-    ImGui::EndMainMenuBar();
-}
-
-void EditorApp::drawStatusBar(float frameTimeMs)
-{
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
-    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
-                                        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDocking;
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.f, 4.f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_MenuBarBg));
-    const bool open = ImGui::BeginViewportSideBar("##barra_estado", viewport, ImGuiDir_Down,
-                                                  ImGui::GetFrameHeight() - 2.f, kFlags);
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
-    if (!open)
-    {
-        ImGui::End();
-        return;
-    }
-
-    ImGui::AlignTextToFramePadding();
-    if (context_.project().isOpen())
-    {
-        const std::string& scene = context_.currentScene();
-        ImGui::TextDisabled("%s", context_.project().name().c_str());
-        ImGui::SameLine();
-        ImGui::TextDisabled("/");
-        ImGui::SameLine();
-        ImGui::TextUnformatted(scene.empty() ? "(sin escena)" : scene.c_str());
-        if (context_.isDirty())
-        {
-            ImGui::SameLine(0.f, 4.f);
-            ImGui::TextColored(kUpdateColor, "*");
-        }
-        if (context_.selection().size() > 1)
-        {
-            ImGui::SameLine();
-            ImGui::TextDisabled("  %d seleccionados", static_cast<int>(context_.selection().size()));
-        }
-    }
-    else
-    {
-        ImGui::TextDisabled("Sin proyecto: crea o abre uno desde el menú Proyecto");
-    }
-
-    const std::string& error = context_.lastError().empty() ? statusError_ : context_.lastError();
-    if (!error.empty())
-    {
-        ImGui::SameLine();
-        ImGui::TextColored(kErrorColor, "   %s", error.c_str());
-    }
-    drawUpdateStatus();
-
-    char right[96];
-    const float fps = frameTimeMs > 0.f ? 1000.f / frameTimeMs : 0.f;
-    std::snprintf(right, sizeof(right), "%.0f FPS    Zio v%s", fps, ZIO_VERSION);
-    const float rightWidth = ImGui::CalcTextSize(right).x;
-    ImGui::SameLine(ImGui::GetWindowWidth() - rightWidth - ImGui::GetStyle().WindowPadding.x);
-    ImGui::TextDisabled("%s", right);
-
-    ImGui::End();
-}
-
-void EditorApp::drawViewportToolbar()
-{
-    if (context_.playing() || viewRect_.w < 1.f || viewRect_.h < 1.f)
-        return;
-
-    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
-                                        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing |
-                                        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDocking |
-                                        ImGuiWindowFlags_NoMove;
-
-    ImGui::SetNextWindowPos(ImVec2(viewRect_.x + 12.f, viewRect_.y + 12.f));
-    ImGui::SetNextWindowBgAlpha(0.88f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.f, 6.f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 9.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.f, 4.f));
-    const bool open = ImGui::Begin("##herramientas_visor", nullptr, kFlags);
-    ImGui::PopStyleVar(3);
-    if (open)
-    {
-        const float size = ImGui::GetFrameHeight() + 4.f;
-        if (iconButton("##mover", Icon::Move, gizmoMode_ == GizmoMode::Move, "Mover (1)", size))
-            gizmoMode_ = GizmoMode::Move;
-        ImGui::SameLine();
-        if (iconButton("##rotar", Icon::Rotate, gizmoMode_ == GizmoMode::Rotate, "Rotar (2)", size))
-            gizmoMode_ = GizmoMode::Rotate;
-        ImGui::SameLine();
-        if (iconButton("##escalar", Icon::Scale, gizmoMode_ == GizmoMode::Scale, "Escalar (3)", size))
-            gizmoMode_ = GizmoMode::Scale;
-        ImGui::SameLine(0.f, 10.f);
-        ImGui::BeginDisabled(context_.selected() == nullptr);
-        if (iconButton("##enfocar", Icon::Focus, false, "Enfocar la selección (F)", size))
-            focusSelection();
-        ImGui::EndDisabled();
-    }
-    ImGui::End();
-}
-
-void EditorApp::changeLayout()
-{
-    writeLayoutSettings(layoutFile_, layout_);
-    resetLayout_ = true;
-}
-
-void EditorApp::buildDefaultLayout(std::uint32_t dockspaceId, float width, float height)
-{
-    const ImGuiID root = dockspaceId;
-    ImGui::DockBuilderRemoveNode(root);
-    ImGui::DockBuilderAddNode(root, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(root, ImVec2(width, height));
-
-    std::vector<int> panels[3];
-    for (int panel = 0; panel < PanelCount; ++panel)
-        panels[static_cast<int>(layout_.side[panel])].push_back(panel);
-    const std::vector<int>& left   = panels[static_cast<int>(PanelSide::Left)];
-    const std::vector<int>& right  = panels[static_cast<int>(PanelSide::Right)];
-    const std::vector<int>& bottom = panels[static_cast<int>(PanelSide::Bottom)];
-
-    ImGuiID center  = root;
-    ImGuiID leftId  = 0;
-    ImGuiID rightId = 0;
-    ImGuiID bottomId = 0;
-    if (!right.empty())
-        rightId = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, nullptr, &center);
-    if (!left.empty())
-        leftId = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, left.size() >= 2 ? 0.27f : 0.22f,
-                                             nullptr, &center);
-    if (!bottom.empty())
-        bottomId = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.26f, nullptr, &center);
-
-    auto stack = [](ImGuiID node, const std::vector<int>& list, ImGuiDir direction) {
-        ImGuiID rest = node;
-        for (std::size_t i = 0; i + 1 < list.size(); ++i)
-        {
-            const float remaining = static_cast<float>(list.size() - i);
-            const float ratio     = list.size() == 2 ? 0.45f : 1.f / remaining;
-            ImGuiID first         = 0;
-            ImGuiID next          = ImGui::DockBuilderSplitNode(rest, direction, ratio, &first, &rest);
-            (void)next;
-            ImGui::DockBuilderDockWindow(panelTitle(list[i]), first);
-        }
-        if (!list.empty())
-            ImGui::DockBuilderDockWindow(panelTitle(list.back()), rest);
+        raw->close();
+        context_.request(Action{ActionKind::CreateProject, nameText, parentText});
+        statusErrorText_.clear();
     };
-    stack(leftId, left, ImGuiDir_Up);
-    stack(rightId, right, ImGuiDir_Up);
-    for (auto it = bottom.rbegin(); it != bottom.rend(); ++it)
-        ImGui::DockBuilderDockWindow(panelTitle(*it), bottomId);
-
-    ImGui::DockBuilderFinish(root);
+    dialog->addButton("Cancelar", [raw]() { raw->cancel(); });
+    dialog->addButton("Crear", confirm, true);
+    dialog->setOnConfirm(confirm);
+    for (LineEdit* edit : {parent, name})
+    {
+        edit->setOnSubmit([confirm](const std::string&) { confirm(); });
+        edit->setOnCancel([raw]() { raw->cancel(); });
+    }
+    ui_->openPopup(std::move(dialog));
+    ui_->setFocus(name);
 }
 
-void EditorApp::drawUpdateStatus()
+void EditorApp::showOpenProject()
 {
-    if (!Updater::enabled())
-        return;
+    using namespace zio::ui;
+    auto dialog  = std::make_unique<Dialog>("Abrir proyecto");
+    auto content = std::make_unique<VBox>();
+    content->add<Label>(std::string("project.zio o su carpeta"));
+    auto* path = content->add<LineEdit>();
+    if (const auto recent = readRecentProject(recentFile_))
+        path->setText(recent->string());
+    auto* error = content->add<Label>(std::string());
+    error->setColor(ui_->theme().danger);
+    dialog->setContent(std::move(content));
 
-    const UpdateStatus update = updater_.status();
-    switch (update.state)
-    {
-    case UpdateState::Available:
-        ImGui::SameLine();
-        ImGui::TextColored(kUpdateColor, "  Actualización disponible: v%s", update.version.c_str());
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Descargar"))
-            updater_.download();
-        break;
-    case UpdateState::Downloading:
-    {
-        ImGui::SameLine();
-        char label[64];
-        std::snprintf(label, sizeof(label), "Descargando v%s", update.version.c_str());
-        ImGui::ProgressBar(update.progress, ImVec2(180.f, 0.f), label);
-        break;
-    }
-    case UpdateState::Downloaded:
-        ImGui::SameLine();
-        ImGui::TextColored(kUpdateColor, "  Zio v%s lista para instalar", update.version.c_str());
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Reiniciar y actualizar") && !context_.hasPending())
+    Dialog* raw = dialog.get();
+    auto confirm = [this, raw, path, error]() {
+        const std::string text = path->text();
+        std::string problem;
+        ProjectManager probe;
+        if (!probe.loadProject(text, &problem))
         {
-            restartAfterClose_ = true;
-            context_.request(Action{ActionKind::CloseWindow, {}, {}});
-        }
-        break;
-    case UpdateState::Error:
-        ImGui::SameLine();
-        ImGui::TextColored(kErrorColor, "  %s", update.error.c_str());
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Reintentar"))
-            updater_.retry();
-        break;
-    default:
-        break;
-    }
-}
-
-void EditorApp::drawProjectPopups()
-{
-    if (wantNewProjectPopup_)
-    {
-        popupError_.clear();
-        ImGui::OpenPopup("Nuevo proyecto");
-        wantNewProjectPopup_ = false;
-    }
-    if (wantOpenProjectPopup_)
-    {
-        popupError_.clear();
-        ImGui::OpenPopup("Abrir proyecto");
-        wantOpenProjectPopup_ = false;
-    }
-
-    if (ImGui::BeginPopupModal("Nuevo proyecto", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-    {
-        ImGui::SetNextItemWidth(520.f);
-        ImGui::InputText("Carpeta padre", newProjectParent_, sizeof(newProjectParent_));
-        ImGui::SetNextItemWidth(520.f);
-        ImGui::InputText("Nombre", newProjectName_, sizeof(newProjectName_));
-        if (!popupError_.empty())
-            ImGui::TextColored(kErrorColor, "%s", popupError_.c_str());
-        if (ImGui::Button("Crear"))
-        {
-            std::string error;
-            if (!ProjectManager::checkNewProject(newProjectParent_, newProjectName_, &error))
-            {
-                popupError_ = error;
-            }
-            else if (context_.request(Action{ActionKind::CreateProject, newProjectName_, newProjectParent_}))
-            {
-                statusError_.clear();
-                ImGui::CloseCurrentPopup();
-            }
-            else
-            {
-                popupError_ = context_.lastError();
-                context_.clearError();
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancelar"))
-            ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
-
-    if (ImGui::BeginPopupModal("Abrir proyecto", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-    {
-        ImGui::SetNextItemWidth(520.f);
-        ImGui::InputText("project.zio o su carpeta", openProjectPath_, sizeof(openProjectPath_));
-        if (!popupError_.empty())
-            ImGui::TextColored(kErrorColor, "%s", popupError_.c_str());
-        if (ImGui::Button("Abrir"))
-        {
-            std::string error;
-            ProjectManager probe;
-            if (!probe.loadProject(openProjectPath_, &error))
-            {
-                popupError_ = error;
-            }
-            else if (context_.request(Action{ActionKind::OpenProject, {}, openProjectPath_}))
-            {
-                statusError_.clear();
-                ImGui::CloseCurrentPopup();
-            }
-            else
-            {
-                popupError_ = context_.lastError();
-                context_.clearError();
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancelar"))
-            ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
-}
-
-void EditorApp::drawSceneSavePopups()
-{
-    if (wantSaveAsPopup_)
-    {
-        popupError_.clear();
-        ImGui::OpenPopup("Guardar escena como");
-        wantSaveAsPopup_ = false;
-    }
-    if (context_.hasPending() && !ImGui::IsPopupOpen("Cambios sin guardar"))
-    {
-        modalError_.clear();
-        ImGui::OpenPopup("Cambios sin guardar");
-    }
-
-    if (ImGui::BeginPopupModal("Guardar escena como", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-    {
-        ImGui::SetNextItemWidth(360.f);
-        ImGui::InputText("Nombre (en assets/scenes)", saveAsName_, sizeof(saveAsName_));
-        if (!popupError_.empty())
-            ImGui::TextColored(kErrorColor, "%s", popupError_.c_str());
-        if (ImGui::Button("Guardar"))
-        {
-            std::string error;
-            if (context_.saveSceneAs(saveAsName_, &error))
-            {
-                popupError_.clear();
-                ImGui::CloseCurrentPopup();
-            }
-            else
-            {
-                popupError_ = error;
-                context_.clearError();
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancelar"))
-            ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
-
-    if (ImGui::BeginPopupModal("Cambios sin guardar", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-    {
-        if (!context_.hasPending())
-        {
-            ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
+            error->setText(problem);
             return;
         }
-
-        const std::string& scene = context_.currentScene();
-        ImGui::Text("La escena %s tiene cambios sin guardar.", scene.empty() ? "(sin archivo)" : scene.c_str());
-        ImGui::TextDisabled("%s", describe(context_.pending()).c_str());
-        if (!modalError_.empty())
-            ImGui::TextColored(kErrorColor, "%s", modalError_.c_str());
-
-        const bool canSave = context_.canSave();
-        if (!canSave)
-            ImGui::BeginDisabled();
-        if (ImGui::Button("Guardar"))
-        {
-            if (!context_.resolvePending(Decision::Save))
-            {
-                modalError_ = context_.lastError();
-                context_.clearError();
-            }
-        }
-        if (!canSave)
-            ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Descartar"))
-            context_.resolvePending(Decision::Discard);
-        ImGui::SameLine();
-        if (ImGui::Button("Cancelar"))
-            context_.resolvePending(Decision::Cancel);
-        if (!canSave)
-            ImGui::TextDisabled("La escena no tiene archivo: usa Escena > Guardar como antes de continuar.");
-
-        if (!context_.hasPending())
-            ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
+        raw->close();
+        context_.request(Action{ActionKind::OpenProject, {}, text});
+        statusErrorText_.clear();
+    };
+    dialog->addButton("Cancelar", [raw]() { raw->cancel(); });
+    dialog->addButton("Abrir", confirm, true);
+    dialog->setOnConfirm(confirm);
+    path->setOnSubmit([confirm](const std::string&) { confirm(); });
+    path->setOnCancel([raw]() { raw->cancel(); });
+    ui_->openPopup(std::move(dialog));
+    ui_->setFocus(path);
+    path->selectAll();
 }
 
-void EditorApp::drawUi(float frameTimeMs)
+void EditorApp::showSaveAs()
 {
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    using namespace zio::ui;
+    auto dialog  = std::make_unique<Dialog>("Guardar escena como");
+    auto content = std::make_unique<VBox>();
+    content->add<Label>(std::string("Nombre (en assets/scenes)"));
+    auto* name  = content->add<LineEdit>();
+    auto* error = content->add<Label>(std::string());
+    error->setColor(ui_->theme().danger);
+    dialog->setContent(std::move(content));
 
-    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S) && !context_.hasPending())
-        saveCurrentScene();
-    if (ImGui::IsKeyPressed(ImGuiKey_F5, false) && !context_.hasPending() && !ImGui::GetIO().WantTextInput)
-        togglePlay();
-
-    drawMenuBar();
-    drawStatusBar(frameTimeMs);
-
-    const ImGuiID dockspaceId = viewport->ID;
-    if (resetLayout_ || ImGui::DockBuilderGetNode(dockspaceId) == nullptr)
-    {
-        buildDefaultLayout(dockspaceId, viewport->WorkSize.x, viewport->WorkSize.y);
-        resetLayout_       = false;
-        focusFilesTab_     = true;
-        layoutBuiltFrame_  = ImGui::GetFrameCount();
-    }
-    ImGui::DockSpaceOverViewport(dockspaceId, viewport,
-                                 ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingOverCentralNode);
-
-    {
-        constexpr ImGuiDockNodeFlags kLockFlags = ImGuiDockNodeFlags_NoUndocking | ImGuiDockNodeFlags_NoDockingSplit |
-                                                  ImGuiDockNodeFlags_NoDockingOverMe |
-                                                  ImGuiDockNodeFlags_NoDockingOverOther |
-                                                  ImGuiDockNodeFlags_NoDockingOverEmpty;
-        std::vector<ImGuiDockNode*> pending;
-        if (ImGuiDockNode* rootNode = ImGui::DockBuilderGetNode(dockspaceId))
-            pending.push_back(rootNode);
-        while (!pending.empty())
+    Dialog* raw = dialog.get();
+    auto confirm = [this, raw, name, error]() {
+        std::string problem;
+        if (context_.saveSceneAs(name->text(), &problem))
         {
-            ImGuiDockNode* node = pending.back();
-            pending.pop_back();
-            if (layout_.locked)
-                node->LocalFlags |= kLockFlags;
-            else
-                node->LocalFlags &= ~kLockFlags;
-            node->UpdateMergedFlags();
-            for (ImGuiDockNode* child : node->ChildNodes)
-                if (child)
-                    pending.push_back(child);
+            raw->close();
+            return;
         }
-    }
+        error->setText(problem);
+        context_.clearError();
+    };
+    dialog->addButton("Cancelar", [raw]() { raw->cancel(); });
+    dialog->addButton("Guardar", confirm, true);
+    dialog->setOnConfirm(confirm);
+    name->setOnSubmit([confirm](const std::string&) { confirm(); });
+    name->setOnCancel([raw]() { raw->cancel(); });
+    ui_->openPopup(std::move(dialog));
+    ui_->setFocus(name);
+}
 
-    viewRect_ = ViewRect{viewport->WorkPos.x, viewport->WorkPos.y, viewport->WorkSize.x, viewport->WorkSize.y};
-    if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspaceId))
-        viewRect_ = ViewRect{central->Pos.x, central->Pos.y, central->Size.x, central->Size.y};
+void EditorApp::showUnsaved()
+{
+    using namespace zio::ui;
+    unsavedOpen_ = true;
+    auto dialog  = std::make_unique<Dialog>("Cambios sin guardar");
+    auto content = std::make_unique<VBox>();
+    const std::string& scene = context_.currentScene();
+    content->add<Label>("La escena " + (scene.empty() ? std::string("(sin archivo)") : scene) + " tiene cambios sin guardar.");
+    content->add<Label>(describePending())->setColor(ui_->theme().textDim);
+    auto* error = content->add<Label>(std::string());
+    error->setColor(ui_->theme().danger);
+    const bool canSave = context_.canSave();
+    if (!canSave)
+        content->add<Label>(std::string("La escena no tiene archivo: usa Escena > Guardar como antes de continuar."))
+            ->setColor(ui_->theme().textDim);
+    dialog->setContent(std::move(content));
+    dialog->setWidth(520.f);
 
-    drawProjectPopups();
-    drawSceneSavePopups();
-
-    hierarchyPanel_.draw(context_);
-    inspectorPanel_.draw(context_);
-    fileExplorerPanel_.draw(context_);
-    diagnosticsPanel_.draw(frameTimeMs);
-
-    if (layout_.locked && ImGui::GetFrameCount() - layoutBuiltFrame_ > 3)
-    {
-        for (int panel = 0; panel < PanelCount; ++panel)
+    Dialog* raw = dialog.get();
+    dialog->setOnClosed([this]() { unsavedOpen_ = false; });
+    dialog->setOnCancel([this]() { context_.resolvePending(Decision::Cancel); });
+    dialog->addButton("Cancelar", [raw]() { raw->cancel(); });
+    dialog->addButton("Descartar", [this, raw]() {
+        raw->close();
+        context_.resolvePending(Decision::Discard);
+    });
+    Button* save = dialog->addButton("Guardar", [this, raw, error]() {
+        if (!context_.resolvePending(Decision::Save))
         {
-            const ImGuiWindow* window = ImGui::FindWindowByName(panelTitle(panel));
-            if (window && window->WasActive && window->DockNode == nullptr)
-            {
-                resetLayout_ = true;
-                break;
-            }
+            error->setText(context_.lastError());
+            context_.clearError();
+            return;
         }
-    }
-
-    if (focusFilesTab_)
-    {
-        ImGui::SetWindowFocus(panelTitle(PanelFiles));
-        focusFilesTab_ = false;
-    }
-
-    drawViewportToolbar();
+        raw->close();
+    }, true);
+    save->setEnabled(canSave);
+    ui_->openPopup(std::move(dialog));
 }
 
 }

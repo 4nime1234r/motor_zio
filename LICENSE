@@ -3,9 +3,7 @@ Zio - Licencia Propietaria
 Copyright (c) 2026 4nime1234r. Todos los derechos reservados.
 
 Esta licencia se aplica al motor Zio y al editor Zio, es decir, a todos los
-archivos de este repositorio excepto el contenido del directorio "third_party",
-que se distribuye bajo sus propias licencias (consulta
-third_party/imgui/LICENSE.txt).
+archivos de este repositorio.
 
 1. Propiedad
    El Software es y seguirá siendo propiedad exclusiva del Autor. Nada de esta

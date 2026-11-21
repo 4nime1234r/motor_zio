@@ -3,6 +3,16 @@
 #include <chrono>
 #include <thread>
 
+#if defined(ZIO_PLATFORM_WINDOWS)
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include <timeapi.h>
+#endif
+
 #include "zio/audio/AudioManager.h"
 #include "zio/events/EventBus.h"
 #include "zio/input/InputManager.h"
@@ -76,6 +86,10 @@ bool Application::run(AppConfig config)
     const float dt          = 1.f / static_cast<float>(fps);
     const auto tickDuration  = std::chrono::duration<float>(dt);
 
+#if defined(ZIO_PLATFORM_WINDOWS)
+    timeBeginPeriod(1);
+#endif
+
     running_ = true;
     while (running_)
     {
@@ -85,7 +99,12 @@ bool Application::run(AppConfig config)
         {
             platform::Window::instance().pumpMessages();
             if (platform::Window::instance().closeRequested())
-                requestExit();
+            {
+                if (onCloseRequested())
+                    requestExit();
+                else
+                    platform::Window::instance().cancelClose();
+            }
 
             std::uint32_t newWidth = 0, newHeight = 0;
             if (platform::Window::instance().consumeResize(newWidth, newHeight))
@@ -112,6 +131,10 @@ bool Application::run(AppConfig config)
         if (sleepFor > std::chrono::steady_clock::duration::zero())
             std::this_thread::sleep_for(sleepFor);
     }
+
+#if defined(ZIO_PLATFORM_WINDOWS)
+    timeEndPeriod(1);
+#endif
 
     onShutdown();
 

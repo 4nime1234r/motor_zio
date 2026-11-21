@@ -53,6 +53,15 @@ void EditorContext::clearSelection()
     setSelection({});
 }
 
+void EditorContext::selectNodes(std::vector<zio::scene3d::Node3D*> nodes)
+{
+    std::vector<zio::scene3d::Node3D*> valid;
+    for (zio::scene3d::Node3D* node : nodes)
+        if (node && contains(node))
+            valid.push_back(node);
+    setSelection(std::move(valid));
+}
+
 bool EditorContext::isSelected(const zio::scene3d::Node3D* node) const
 {
     return std::find(selection_.begin(), selection_.end(), node) != selection_.end();

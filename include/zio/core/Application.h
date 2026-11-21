@@ -37,6 +37,8 @@ protected:
 
     virtual void onShutdown() {}
 
+    virtual bool onCloseRequested() { return true; }
+
 private:
     static Application* instance_;
 

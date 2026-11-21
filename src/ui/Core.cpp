@@ -247,7 +247,7 @@ Widget* Context::openPopup(std::unique_ptr<Widget> popup)
     return overlay_->addChild(std::move(popup));
 }
 
-void Context::closePopupWidget(Widget* popup)
+void Context::closePopup(Widget* popup)
 {
     popup->onPopupClosed();
     if (auto removed = overlay_->removeChild(popup))
@@ -260,7 +260,7 @@ void Context::closePopups()
         return;
     auto list = popupList();
     for (auto it = list.rbegin(); it != list.rend(); ++it)
-        closePopupWidget(*it);
+        closePopup(*it);
 }
 
 void Context::closePopupsAbove(Widget* popup)
@@ -278,13 +278,13 @@ void Context::closePopupsAbove(Widget* popup)
             after = true;
     }
     for (auto it = toClose.rbegin(); it != toClose.rend(); ++it)
-        closePopupWidget(*it);
+        closePopup(*it);
 }
 
 void Context::closeTopPopup()
 {
     if (Widget* top = topPopup())
-        closePopupWidget(top);
+        closePopup(top);
 }
 
 void Context::hideTooltip()

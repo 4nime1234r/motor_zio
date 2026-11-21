@@ -36,6 +36,7 @@ public:
     void pumpMessages();
 
     bool closeRequested() const;
+    void cancelClose();
 
     bool isMinimized() const;
 

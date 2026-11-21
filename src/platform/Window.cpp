@@ -456,6 +456,11 @@ void Window::pumpMessages()
     }
 }
 
+void Window::cancelClose()
+{
+    impl_->closeRequested = false;
+}
+
 bool Window::closeRequested() const
 {
     return impl_->closeRequested;
@@ -543,6 +548,8 @@ bool Window::isOpen() const
 }
 
 void Window::pumpMessages() {}
+
+void Window::cancelClose() {}
 
 bool Window::closeRequested() const
 {

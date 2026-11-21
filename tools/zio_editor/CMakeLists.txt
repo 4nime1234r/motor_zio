@@ -14,17 +14,12 @@ if(NOT TARGET engine)
     add_subdirectory(${ZIO_ROOT} engine)
 endif()
 
-set(IMGUI_DIR "${ZIO_ROOT}/third_party/imgui")
-
-set(IMGUI_RENDERER_BACKEND ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp)
-
 enable_language(RC)
 set_source_files_properties(zio_editor.rc PROPERTIES OBJECT_DEPENDS "${ZIO_ROOT}/assets/icon/zio.ico")
 
 add_executable(zio_editor
     zio_editor.rc
     src/main.cpp
-    src/EditorWindow.cpp
     src/EditorApp.cpp
     src/core/EditorContext.cpp
     src/core/Gizmo.cpp
@@ -32,29 +27,15 @@ add_executable(zio_editor
     src/core/Picking.cpp
     src/core/SelectionGizmo.cpp
     src/core/ViewportGrid.cpp
-    src/core/Theme.cpp
-    src/core/LayoutSettings.cpp
-    src/core/Icons.cpp
     src/project/ProjectManager.cpp
-    src/panels/AddObjectMenu.cpp
     src/panels/ContentBrowserModel.cpp
-    src/panels/SceneHierarchyPanel.cpp
-    src/panels/InspectorPanel.cpp
-    src/panels/DiagnosticsPanel.cpp
-    src/panels/FileExplorerPanel.cpp
+    src/ui/Panels.cpp
+    src/ui/ToolButton.cpp
+    src/ui/ViewportController.cpp
     src/update/Updater.cpp
-
-    ${IMGUI_DIR}/imgui.cpp
-    ${IMGUI_DIR}/imgui_draw.cpp
-    ${IMGUI_DIR}/imgui_tables.cpp
-    ${IMGUI_DIR}/imgui_widgets.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
-    ${IMGUI_RENDERER_BACKEND}
 )
 
 target_include_directories(zio_editor PRIVATE
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
     src
     ${ZIO_ROOT}/src
 )
