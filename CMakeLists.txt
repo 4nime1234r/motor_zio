@@ -40,6 +40,8 @@ add_library(engine STATIC
     src/jobs/JobSystem.cpp
     src/physics/Collision.cpp
     src/physics/World.cpp
+    src/physics3d/Collision3D.cpp
+    src/physics3d/World3D.cpp
     src/platform/Window.cpp
     src/prefs/Prefs.cpp
     src/render/DeviceVulkan.cpp
@@ -97,6 +99,12 @@ endif()
 option(ZIO_BUILD_EDITOR "Build the Zio editor (tools/zio_editor) so it can be run from the IDE" ${zioEditorDefault})
 if(ZIO_BUILD_EDITOR AND WIN32)
     add_subdirectory(tools/zio_editor)
+endif()
+
+option(ZIO_BUILD_TESTS "Compila las pruebas automaticas del motor" OFF)
+if(ZIO_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()
 
 include(GNUInstallDirs)

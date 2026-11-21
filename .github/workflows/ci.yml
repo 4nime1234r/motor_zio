@@ -22,8 +22,12 @@ jobs:
 
       - name: Configurar
         shell: pwsh
-        run: cmake -S . -B build -A x64 -DZIO_EDITOR_UPDATER=ON
+        run: cmake -S . -B build -A x64 -DZIO_EDITOR_UPDATER=ON -DZIO_BUILD_TESTS=ON
 
       - name: Compilar
         shell: pwsh
         run: cmake --build build --config Release --parallel
+
+      - name: Pruebas
+        shell: pwsh
+        run: ctest --test-dir build -C Release --output-on-failure

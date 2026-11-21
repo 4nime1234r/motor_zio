@@ -23,6 +23,7 @@ Es un proyecto en desarrollo activo. La versión actual es la **0.2.0**.
 
 **Sistemas del motor**
 - Física 2D con cuerpos estáticos y dinámicos, rectángulos y círculos, gravedad, impulsos y rebote.
+- Física 3D con cuerpos rígidos (estáticos, dinámicos y cinemáticos), esferas y cajas orientadas, rotación con inercia, fricción, rebote, impulsos y fuerzas, y rayos.
 - Audio con clips, volumen y tono, por sonido o por categoría.
 - Entrada de teclado, ratón y mando.
 - Sistema de tareas en segundo plano con aviso al hilo principal.
@@ -115,7 +116,6 @@ La carpeta `projects/` contiene ejemplos completos, entre ellos `Prueba3D`, una 
 
 ## Limitaciones actuales
 
-- No hay física 3D.
 - No hay animación de huesos ni de sprites.
 - Solo se leen modelos `.obj`, sin materiales avanzados.
 - No hay scripting: el juego se escribe en C++.
