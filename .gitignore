@@ -6,3 +6,6 @@ out/
 .cache/
 .vs/
 zio_prefs.dat
+dotnet/ZioScripting/obj/
+dotnet/ZioScripting/bin/
+.zio/

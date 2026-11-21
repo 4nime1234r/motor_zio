@@ -69,6 +69,7 @@ public:
         std::string name;
         std::unique_ptr<scripting::Script> instance;
         bool started = false;
+        unsigned tried = 0;
     };
 
     bool addScript(const std::string& name);

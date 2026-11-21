@@ -7,6 +7,7 @@ set(ZIO_TESTS
     SpriteAnimationTest
     SkeletonTest
     ScriptTest
+    CSharpScriptTest
 )
 
 foreach(testName IN LISTS ZIO_TESTS)

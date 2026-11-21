@@ -44,7 +44,16 @@ public:
     std::unique_ptr<Script> create(const std::string& name) const;
     std::vector<std::string> names() const;
 
+    using NamesProvider  = std::function<std::vector<std::string>()>;
+    using CreateProvider = std::function<std::unique_ptr<Script>(const std::string&)>;
+    void setProvider(NamesProvider names, CreateProvider create);
+    void notifyChanged() { ++version_; }
+    unsigned version() const { return version_; }
+
 private:
+    NamesProvider providerNames_;
+    CreateProvider providerCreate_;
+    unsigned version_ = 1;
     struct Entry
     {
         std::string name;

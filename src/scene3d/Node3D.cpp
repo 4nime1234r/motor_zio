@@ -22,6 +22,7 @@ bool Node3D::addScript(const std::string& name)
     ScriptSlot slot;
     slot.name     = name;
     slot.instance = scripting::Registry::instance().create(name);
+    slot.tried    = scripting::Registry::instance().version();
     if (slot.instance)
         slot.instance->node_ = this;
     const bool created = slot.instance != nullptr;
@@ -64,6 +65,13 @@ void Node3D::runScripts(float dt)
 {
     for (std::size_t i = 0; i < scripts_.size(); ++i)
     {
+        if (!scripts_[i].instance && scripts_[i].tried != scripting::Registry::instance().version())
+        {
+            scripts_[i].tried    = scripting::Registry::instance().version();
+            scripts_[i].instance = scripting::Registry::instance().create(scripts_[i].name);
+            if (scripts_[i].instance)
+                scripts_[i].instance->node_ = this;
+        }
         scripting::Script* script = scripts_[i].instance.get();
         if (!script)
             continue;

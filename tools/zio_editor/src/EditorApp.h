@@ -1,6 +1,9 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
+#include <mutex>
+#include <set>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -54,6 +57,10 @@ private:
     void rememberProject();
     void openInitialProject();
     void saveLayout();
+    bool ensureDotNet(std::string* error);
+    void loadProjectScripts();
+    void compileCSharp();
+    void flushBuildLines();
     void previewAnimations(zio::scene3d::Node3D& node, float dt);
 
     std::vector<zio::ui::MenuItem> projectItems();
@@ -94,6 +101,12 @@ private:
     zio::ui::Label* statusRight_    = nullptr;
     zio::ui::Button* updateBadge_   = nullptr;
     bool manualCheck_               = false;
+    std::atomic<bool> building_{false};
+    std::mutex buildMutex_;
+    std::vector<std::string> buildLines_;
+    bool buildOk_ = false;
+    std::string buildError_;
+    std::set<std::string> seenBuildLines_;
     UpdateState lastUpdateState_    = UpdateState::Idle;
 
     std::filesystem::path startupProject_;

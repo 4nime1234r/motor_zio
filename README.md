@@ -28,7 +28,7 @@ Zio es de uso libre con atribución: puedes usarlo y modificarlo como quieras, p
 **Sistemas del motor**
 - Física 2D con cuerpos estáticos y dinámicos, rectángulos y círculos, gravedad, impulsos y rebote.
 - Física 3D con cuerpos rígidos (estáticos, dinámicos y cinemáticos), esferas y cajas orientadas, rotación con inercia, fricción, rebote, impulsos y fuerzas, y rayos.
-- Scripts de C++ para los nodos, con `onStart`, `onUpdate` y `onDestroy`, que se guardan en la escena.
+- Scripts de C++ y de C# para los nodos, con `onStart`, `onUpdate` y `onDestroy` (`OnStart`, `OnUpdate` y `OnDestroy` en C#), que se guardan en la escena. Los de C# se compilan desde el editor y se ejecutan también con el botón Jugar.
 - Audio con clips, volumen y tono, por sonido o por categoría.
 - Entrada de teclado, ratón y mando.
 - Librería de interfaz propia (`zio::ui`): widgets en árbol con contenedores de diseño (cajas, paneles, desplazamiento, divisores y pestañas), botones, casillas, listas desplegables, campos de texto con selección y portapapeles, árbol con selección múltiple, barra de menús con submenús y menús contextuales, tooltips, campos numéricos arrastrables, selector de color, texto de varias líneas, rejilla de iconos, iconos con tinte, diálogos, widget de visor para incrustar el 3D, fuente en negrita y área acoplable con paneles a izquierda, derecha o abajo. Tiene un tema con la paleta de Zio y usa las fuentes del sistema. Funciona en juegos y es la base del editor.
@@ -155,12 +155,29 @@ ZIO_SCRIPT(Girar)
 
 Los scripts se adjuntan a los nodos por su nombre, desde el Inspector del editor o con `node->addScript("Girar")`, y se ejecutan cuando el juego actualiza la escena.
 
+Un script de C# (archivo `.cs` en `assets/scripts`):
+
+```csharp
+using System.Numerics;
+using Zio;
+
+public class Girar : Script
+{
+    public override void OnUpdate(float dt)
+    {
+        Node.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, dt) * Node.Rotation;
+    }
+}
+```
+
+En el editor, **Proyecto > Compilar scripts de C#** los compila con `dotnet`, muestra los errores en la pestaña Salida y deja los scripts disponibles en el Inspector. Desde un juego propio: `zio::scripting::DotNetRuntime::instance().start(carpeta)`, `buildScripts(proyecto, ...)` y `loadScripts(...)`. En C# se pueden leer y cambiar la posición, rotación y escala del nodo, leer teclado y ratón, y escribir en el registro con `Log.Info`.
+
 La carpeta `projects/` contiene ejemplos completos, entre ellos `Prueba3D`, una escena 3D con sombras y transparencias, y `PruebaUI`, una pantalla con la librería de interfaz propia.
 
 ## Limitaciones actuales
 
 - Solo funciona en Windows.
-- Los scripts son de C++ y se compilan con el juego. El editor guarda qué scripts tiene cada nodo, pero solo los ejecuta el juego, no el botón Jugar. Todavía no hay scripts de C#.
+- Los scripts de C++ se compilan con el juego: el editor guarda qué scripts tiene cada nodo, pero solo los ejecuta el juego, no el botón Jugar. Los de C# sí se ejecutan en el editor, pero necesitan el SDK de .NET 8 o superior para compilarse y el runtime de .NET para ejecutarse.
 - De los modelos glTF solo se usa el primer material (color base y textura externa); no hay PBR completo ni texturas incrustadas.
 - La animación de huesos se calcula en la CPU.
 

@@ -501,7 +501,7 @@ std::unique_ptr<zio::ui::Widget> InspectorPanel::build()
             }));
         if (items.empty())
         {
-            MenuItem none = MenuItem::item("No hay scripts: crea un .cpp desde el Sistema de archivos");
+            MenuItem none = MenuItem::item("No hay scripts: crea un .cs o un .cpp desde el Sistema de archivos");
             none.enabled  = false;
             items.push_back(std::move(none));
         }
@@ -516,12 +516,13 @@ std::vector<std::string> InspectorPanel::scriptCandidates(const zio::scene3d::No
     std::set<std::string> names;
     const ProjectManager& project = services_.context().project();
     if (project.isOpen())
-        for (const std::string& file : project.listFiles("assets/scripts", ".cpp"))
-        {
-            std::string stem = fs::path(file).stem().string();
-            if (!stem.empty())
-                names.insert(stem);
-        }
+        for (const char* extension : {".cpp", ".cs"})
+            for (const std::string& file : project.listFiles("assets/scripts", extension))
+            {
+                std::string stem = fs::path(file).stem().string();
+                if (!stem.empty())
+                    names.insert(stem);
+            }
     for (const std::string& name : zio::scripting::Registry::instance().names())
         names.insert(name);
     std::vector<std::string> out;

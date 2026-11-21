@@ -71,6 +71,14 @@ int main()
     check(zio::scene3d::loadScene3DFile(loaded, (project.rootDir() / "assets" / "scenes" / "nivel.zscene3d").string(), &error),
           "la escena creada se puede abrir");
     check(AssetFiles::create(project, "notas.txt", &relative, &error) && relative == "assets/notas.txt", "crea un archivo suelto");
+    check(AssetFiles::create(project, "Salto.cs", &relative, &error) && relative == "assets/scripts/Salto.cs",
+          "crea un script de C#");
+    {
+        std::ifstream in(project.rootDir() / "assets" / "scripts" / "Salto.cs");
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        check(text.find("public class Salto : Script") != std::string::npos && text.find("OnUpdate") != std::string::npos,
+              "el script de C# nuevo trae su plantilla");
+    }
     check(AssetFiles::create(project, "mi-jugador.cpp", &relative, &error) && relative == "assets/scripts/mi-jugador.cpp",
           "crea un script de C++");
     {

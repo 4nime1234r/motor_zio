@@ -54,6 +54,7 @@ add_library(engine STATIC
     src/scene2d/SceneIO.cpp
     src/scene3d/Gltf.cpp
     src/scripting/Script.cpp
+    src/scripting/DotNet.cpp
     src/scene3d/Skeleton.cpp
     src/scene3d/Mesh.cpp
     src/scene3d/Node3D.cpp
@@ -107,6 +108,30 @@ zio_add_spirv_shader(engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/mesh3d.frag mesh3d_frag.spv.h zio_mesh3d_frag_spirv)
 zio_add_spirv_shader(engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/shadow.frag shadow_frag.spv.h zio_shadow_frag_spirv)
+
+find_program(ZIO_DOTNET dotnet)
+set(ZIO_BRIDGE_CPP ${CMAKE_CURRENT_BINARY_DIR}/ZioScriptingData.cpp)
+if(ZIO_DOTNET AND WIN32)
+    set(ZIO_BRIDGE_OUT ${CMAKE_CURRENT_BINARY_DIR}/zioscripting)
+    file(GLOB ZIO_BRIDGE_SOURCES CONFIGURE_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/dotnet/ZioScripting/*.cs
+        ${CMAKE_CURRENT_SOURCE_DIR}/dotnet/ZioScripting/*.csproj)
+    add_custom_command(
+        OUTPUT ${ZIO_BRIDGE_CPP}
+        COMMAND ${ZIO_DOTNET} build ${CMAKE_CURRENT_SOURCE_DIR}/dotnet/ZioScripting/ZioScripting.csproj
+                -c Release -o ${ZIO_BRIDGE_OUT} --nologo -v q
+        COMMAND ${CMAKE_COMMAND} -DDIR=${ZIO_BRIDGE_OUT} -DOUTPUT=${ZIO_BRIDGE_CPP}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/zio_embed_bridge.cmake
+        DEPENDS ${ZIO_BRIDGE_SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/zio_embed_bridge.cmake
+        COMMENT "Compilando el puente de C# (ZioScripting)"
+        VERBATIM)
+else()
+    message(STATUS "No se encontro dotnet: el motor se compila sin el puente de scripts de C#")
+    file(WRITE ${ZIO_BRIDGE_CPP}.in "#include \"scripting/EmbeddedBridge.h\"\n\nnamespace zio::scripting\n{\n\nconst EmbeddedFile* embeddedBridgeFiles(int& count)\n{\n    static const unsigned char empty[] = {0};\n    static const EmbeddedFile files[] = {{\"ZioScripting.dll\", empty, 0}};\n    count = 1;\n    return files;\n}\n\n}\n")
+    configure_file(${ZIO_BRIDGE_CPP}.in ${ZIO_BRIDGE_CPP} COPYONLY)
+endif()
+target_sources(engine PRIVATE ${ZIO_BRIDGE_CPP})
+set_source_files_properties(${ZIO_BRIDGE_CPP} PROPERTIES GENERATED TRUE)
 
 zio_enable_optimizations(engine)
 

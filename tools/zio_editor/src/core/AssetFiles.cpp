@@ -27,6 +27,13 @@ std::string classNameFrom(std::string_view fileName)
     return out;
 }
 
+std::string csharpTemplate(const std::string& className)
+{
+    return "using Zio;\n\npublic class " + className +
+           " : Script\n{\n    public override void OnStart()\n    {\n    }\n\n    public override void "
+           "OnUpdate(float dt)\n    {\n    }\n}\n";
+}
+
 std::string scriptTemplate(const std::string& className)
 {
     return "#include \"zio/scene3d/Node3D.h\"\n#include \"zio/scripting/Script.h\"\n\nclass " + className +
@@ -160,6 +167,10 @@ bool AssetFiles::create(const ProjectManager& project, std::string_view name, st
     else if (extensionOf(name) == "cpp" && relative.rfind("assets/scripts/", 0) == 0)
     {
         out << scriptTemplate(classNameFrom(name));
+    }
+    else if (extensionOf(name) == "cs" && relative.rfind("assets/scripts/", 0) == 0)
+    {
+        out << csharpTemplate(classNameFrom(name));
     }
     out.close();
     if (!out)

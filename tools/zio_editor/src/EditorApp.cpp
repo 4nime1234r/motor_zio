@@ -8,6 +8,8 @@
 
 #include "core/RecentProject.h"
 #include "ui/EditorIcons.h"
+#include "zio/jobs/JobSystem.h"
+#include "zio/scripting/DotNet.h"
 #include "update/ReleaseNotes.h"
 #include "zio/input/InputManager.h"
 #include "zio/platform/Window.h"
@@ -153,6 +155,106 @@ void EditorApp::rememberProject()
         return;
     rememberedProject_ = context_.project().rootDir();
     writeRecentProject(recentFile_, rememberedProject_);
+    loadProjectScripts();
+}
+
+bool EditorApp::ensureDotNet(std::string* error)
+{
+    auto& runtime = zio::scripting::DotNetRuntime::instance();
+    if (runtime.running())
+        return true;
+    const char* appData = std::getenv("APPDATA");
+    const fs::path dir  = (appData && *appData ? fs::path(appData) : fs::temp_directory_path()) / "ZioEditor" / "dotnet";
+    return runtime.start(dir, error);
+}
+
+void EditorApp::loadProjectScripts()
+{
+    const fs::path dll = zio::scripting::DotNetRuntime::scriptsDllPath(context_.project().rootDir());
+    std::error_code ec;
+    if (!fs::exists(dll, ec))
+        return;
+    std::string error;
+    if (!ensureDotNet(&error))
+    {
+        log("Scripts de C#: " + error, true);
+        return;
+    }
+    auto& runtime = zio::scripting::DotNetRuntime::instance();
+    if (runtime.loadScripts(dll, &error))
+        log("Scripts de C# cargados: " + std::to_string(runtime.scriptNames().size()));
+    else
+        log(error, true);
+}
+
+void EditorApp::flushBuildLines()
+{
+    std::vector<std::string> lines;
+    {
+        std::lock_guard<std::mutex> lock(buildMutex_);
+        lines.swap(buildLines_);
+    }
+    for (std::string& line : lines)
+    {
+        const std::size_t bracket = line.rfind(" [");
+        if (bracket != std::string::npos && line.find(".csproj]") != std::string::npos)
+            line.erase(bracket);
+        const std::string root = context_.project().rootDir().string() + "\\";
+        for (std::size_t at = line.find(root); at != std::string::npos; at = line.find(root))
+            line.erase(at, root.size());
+        if (line.find("workload") != std::string::npos || line.find("Tiempo transcurrido") != std::string::npos ||
+            line.find("Advertencia(s)") != std::string::npos || !seenBuildLines_.insert(line).second)
+            continue;
+        log(line, line.find(" error ") != std::string::npos || line.find("ERROR") != std::string::npos);
+    }
+}
+
+void EditorApp::compileCSharp()
+{
+    if (!context_.project().isOpen() || building_)
+        return;
+    if (context_.playing())
+    {
+        log("Detén el juego antes de compilar los scripts de C#.", true);
+        return;
+    }
+    std::string error;
+    if (!ensureDotNet(&error))
+    {
+        log(error, true);
+        return;
+    }
+    building_ = true;
+    seenBuildLines_.clear();
+    log("Compilando scripts de C#...");
+    const fs::path root = context_.project().rootDir();
+    zio::jobs::JobSystem::instance().enqueue(
+        [this, root]() {
+            std::string problem;
+            buildOk_ = zio::scripting::DotNetRuntime::buildScripts(
+                root,
+                [this](const std::string& line) {
+                    std::lock_guard<std::mutex> lock(buildMutex_);
+                    buildLines_.push_back(line);
+                },
+                &problem);
+            buildError_ = problem;
+        },
+        [this, root]() {
+            flushBuildLines();
+            building_ = false;
+            if (!buildOk_)
+            {
+                log(buildError_, true);
+                return;
+            }
+            std::string error;
+            auto& runtime = zio::scripting::DotNetRuntime::instance();
+            if (runtime.loadScripts(zio::scripting::DotNetRuntime::scriptsDllPath(root), &error))
+                log("Scripts de C# compilados y cargados: " + std::to_string(runtime.scriptNames().size()));
+            else
+                log(error, true);
+        });
 }
 
 void EditorApp::togglePlay()
@@ -329,8 +431,10 @@ void EditorApp::showPopup(std::vector<MenuItem> items, zio::ui::Vec2 position)
 
 std::vector<MenuItem> EditorApp::projectItems()
 {
+    MenuItem compile = MenuItem::item("Compilar scripts de C#", [this]() { compileCSharp(); });
+    compile.enabled  = context_.project().isOpen() && !building_;
     return {MenuItem::item("Nuevo proyecto...", [this]() { showNewProject(); }),
-            MenuItem::item("Abrir proyecto...", [this]() { showOpenProject(); })};
+            MenuItem::item("Abrir proyecto...", [this]() { showOpenProject(); }), MenuItem::line(), std::move(compile)};
 }
 
 std::vector<MenuItem> EditorApp::sceneItems()
@@ -705,6 +809,9 @@ void EditorApp::onBeforeTick(float dt)
     files_.refresh(realDt_);
     performance_.refresh(realDt_);
     output_.refresh();
+    flushBuildLines();
+    for (const std::string& line : zio::scripting::DotNetRuntime::takeLog())
+        log(line, line.rfind("[error]", 0) == 0);
     refreshStatus();
 
     if (!context_.playing())
