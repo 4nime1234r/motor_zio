@@ -141,3 +141,5 @@ cmake/            Scripts y plantillas de CMake
 Zio es software propietario. Copyright (c) 2026 4nime1234r. Todos los derechos reservados.
 
 Puedes compilarlo y usarlo para crear tus propios juegos y distribuirlos sin regalías, pero no puedes copiar, modificar ni redistribuir el motor o su código. Consulta el archivo [LICENSE](LICENSE) para los términos completos.
+
+Los iconos del editor son de [Lucide](https://lucide.dev), gratuitos y de licencia abierta (ISC, y MIT para los derivados de Feather). El texto de la licencia está en `third_party/icons/LICENSE-lucide.txt`.

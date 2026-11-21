@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "core/RecentProject.h"
+#include "ui/EditorIcons.h"
 #include "zio/input/InputManager.h"
 #include "zio/platform/Window.h"
 #include "zio/render/Device.h"
@@ -53,6 +54,7 @@ bool EditorApp::onInit()
     if (auto bold = zio::ui::createSystemFont("Segoe UI", 17.f, true))
         ui_->theme().fontBold = bold;
     host_ = std::make_unique<zio::ui::EngineHost>(*ui_);
+    EditorIcons::init();
 
     recentFile_ = recentProjectFile();
     layoutFile_ = layoutSettingsPath();
@@ -117,6 +119,7 @@ void EditorApp::onShutdown()
     if (keyListener_ != zio::events::kInvalidListenerId)
         zio::events::EventBus::instance().unsubscribe(keyListener_);
     updater_.finish(restartAfterClose_);
+    EditorIcons::shutdown();
     host_.reset();
     ui_.reset();
 }

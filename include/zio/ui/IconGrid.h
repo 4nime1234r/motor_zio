@@ -1,10 +1,12 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "zio/core/Platform.h"
+#include "zio/ui/Icon.h"
 #include "zio/ui/Widget.h"
 
 namespace zio::ui
@@ -16,6 +18,7 @@ struct IconItem
     Color color = Color::white();
     std::string badge;
     bool folder     = false;
+    std::shared_ptr<Icon> icon;
     void* userData  = nullptr;
 };
 

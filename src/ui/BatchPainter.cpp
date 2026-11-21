@@ -191,6 +191,13 @@ void BatchPainter::triangle(Vec2 a, Vec2 b, Vec2 c, Color color)
     renderer::BatchRenderer::instance().submitQuad(positions, uvs, color, impl_->white);
 }
 
+void BatchPainter::image(std::uint32_t texture, const Rect& rect, Color tint)
+{
+    if (tint.a <= 0.f || texture == render::kInvalidHandle || impl_->clips.empty())
+        return;
+    impl_->quad(rect, 0.f, 0.f, 1.f, 1.f, tint, texture);
+}
+
 void BatchPainter::text(Font& font, Vec2 topLeft, std::string_view utf8, Color color)
 {
     if (color.a <= 0.f || utf8.empty() || impl_->clips.empty())

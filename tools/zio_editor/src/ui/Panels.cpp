@@ -16,6 +16,7 @@
 #include <system_error>
 #include <shellapi.h>
 
+#include "ui/EditorIcons.h"
 #include "zio/jobs/JobSystem.h"
 #include "zio/renderer/BatchRenderer.h"
 
@@ -74,36 +75,43 @@ zio::ui::IconItem iconFor(const AssetEntry& entry)
     item.text = entry.relative.size() > 7 ? entry.relative.substr(7) : entry.relative;
     const std::string& ext = entry.extension;
 
+    const char* icon = "file";
     if (ext == "zscene3d")
     {
         item.color = kSceneColor;
-        item.badge = "ESC";
+        icon       = "clapperboard";
     }
     else if (oneOf(ext, {"obj", "gltf", "glb", "fbx", "bin"}))
     {
         item.color = kMeshColor;
-        item.badge = "3D";
+        icon       = "box";
     }
     else if (oneOf(ext, {"png", "jpg", "jpeg", "bmp", "tga"}))
     {
         item.color = rgb(0x4dd0e1);
-        item.badge = "IMG";
+        icon       = "file-image";
     }
     else if (oneOf(ext, {"wav", "ogg", "mp3", "flac"}))
     {
         item.color = rgb(0xf472b6);
-        item.badge = "SND";
+        icon       = "file-music";
     }
     else if (oneOf(ext, {"cs", "cpp", "cc", "c", "h", "hpp", "lua"}))
     {
         item.color = rgb(0xc084fc);
-        item.badge = ext == "cs" ? "C#" : ((ext == "cpp" || ext == "cc") ? "C++" : upperCase(ext));
+        icon       = "file-code";
+    }
+    else if (oneOf(ext, {"txt", "md", "json", "xml", "ini", "cfg"}))
+    {
+        item.color = rgb(0x9ca3af);
+        icon       = "file-text";
     }
     else
     {
         item.color = rgb(0x9ca3af);
         item.badge = upperCase(ext).substr(0, 4);
     }
+    item.icon = EditorIcons::get(icon);
     return item;
 }
 
@@ -210,6 +218,7 @@ void HierarchyPanel::addChildren(TreeItem* parent, zio::scene3d::Node3D& node,
         TreeItem* item    = parent->add(child->name().empty() ? "(sin nombre)" : child->name());
         item->userData    = child.get();
         item->iconColor   = isMesh ? kMeshColor : kNodeColor;
+        item->icon        = EditorIcons::get(isMesh ? "box" : "axis-3d");
         const auto it     = expanded.find(child.get());
         item->expanded    = filterText_.empty() ? (it == expanded.end() ? true : it->second) : true;
         addChildren(item, *child, expanded);
@@ -254,6 +263,7 @@ void HierarchyPanel::rebuild()
     TreeItem* top              = tree_->root()->add(root.name().empty() ? "Escena" : root.name());
     top->userData              = &root;
     top->iconColor             = kSceneColor;
+    top->icon                  = EditorIcons::get("clapperboard");
     const auto it              = expanded.find(&root);
     top->expanded              = it == expanded.end() ? true : it->second;
     addChildren(top, root, expanded);

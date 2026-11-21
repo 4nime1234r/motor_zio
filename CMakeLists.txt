@@ -66,6 +66,7 @@ add_library(engine STATIC
     src/ui/Controls.cpp
     src/ui/Core.cpp
     src/ui/Dialog.cpp
+    src/ui/Icon.cpp
     src/ui/Dock.cpp
     src/ui/EngineHost.cpp
     src/ui/Fields.cpp

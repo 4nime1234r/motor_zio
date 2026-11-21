@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include "zio/ui/Icon.h"
 #include <memory>
 #include <optional>
 #include <string>
@@ -17,6 +18,7 @@ class ZIO_API TreeItem
 public:
     std::string text;
     std::optional<Color> iconColor;
+    std::shared_ptr<Icon> icon;
     bool expanded  = true;
     bool selected  = false;
     void* userData = nullptr;

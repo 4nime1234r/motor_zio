@@ -2,91 +2,13 @@
 
 #include <cmath>
 
+#include "ui/EditorIcons.h"
+
 namespace zio_editor
 {
 
-namespace
-{
-
-using zio::ui::Color;
 using zio::ui::Painter;
 using zio::ui::Vec2;
-
-constexpr float kPi = 3.14159265f;
-
-void arrowHead(Painter& painter, Vec2 tip, Vec2 direction, float size, Color color)
-{
-    const Vec2 side(-direction.y, direction.x);
-    const Vec2 base(tip.x - direction.x * size, tip.y - direction.y * size);
-    painter.triangle(tip, {base.x + side.x * size * 0.6f, base.y + side.y * size * 0.6f},
-                     {base.x - side.x * size * 0.6f, base.y - side.y * size * 0.6f}, color);
-}
-
-void drawMove(Painter& painter, Vec2 c, float r, Color color, float t)
-{
-    const float head = r * 0.4f;
-    const Vec2 dirs[4] = {{1.f, 0.f}, {-1.f, 0.f}, {0.f, 1.f}, {0.f, -1.f}};
-    for (const Vec2& d : dirs)
-    {
-        const Vec2 tip(c.x + d.x * r, c.y + d.y * r);
-        painter.line(c, {tip.x - d.x * head * 0.5f, tip.y - d.y * head * 0.5f}, color, t);
-        arrowHead(painter, tip, d, head, color);
-    }
-}
-
-void drawRotate(Painter& painter, Vec2 c, float r, Color color, float t)
-{
-    const float radius = r * 0.82f;
-    const float start  = -kPi * 0.15f;
-    const float end    = kPi * 1.45f;
-    constexpr int kSegments = 22;
-    Vec2 previous(c.x + std::cos(start) * radius, c.y + std::sin(start) * radius);
-    for (int i = 1; i <= kSegments; ++i)
-    {
-        const float a = start + (end - start) * static_cast<float>(i) / static_cast<float>(kSegments);
-        const Vec2 point(c.x + std::cos(a) * radius, c.y + std::sin(a) * radius);
-        painter.line(previous, point, color, t);
-        previous = point;
-    }
-    const Vec2 tangent(-std::sin(end), std::cos(end));
-    arrowHead(painter, {previous.x + tangent.x * r * 0.18f, previous.y + tangent.y * r * 0.18f}, tangent, r * 0.46f, color);
-}
-
-void drawScale(Painter& painter, Vec2 c, float r, Color color, float t)
-{
-    const float box = r * 0.9f;
-    const float x0  = c.x - r;
-    const float y0  = c.y + r - box;
-    painter.line({x0, y0}, {x0 + box, y0}, color, t);
-    painter.line({x0 + box, y0}, {x0 + box, y0 + box}, color, t);
-    painter.line({x0 + box, y0 + box}, {x0, y0 + box}, color, t);
-    painter.line({x0, y0 + box}, {x0, y0}, color, t);
-    const Vec2 from(c.x - r * 0.1f, c.y + r * 0.1f);
-    const Vec2 tip(c.x + r, c.y - r);
-    painter.line(from, tip, color, t);
-    arrowHead(painter, tip, {0.7071f, -0.7071f}, r * 0.5f, color);
-}
-
-void drawFocus(Painter& painter, Vec2 c, float r, Color color, float t)
-{
-    constexpr int kSegments = 20;
-    const float radius      = r * 0.55f;
-    Vec2 previous(c.x + radius, c.y);
-    for (int i = 1; i <= kSegments; ++i)
-    {
-        const float a = 2.f * kPi * static_cast<float>(i) / static_cast<float>(kSegments);
-        const Vec2 point(c.x + std::cos(a) * radius, c.y + std::sin(a) * radius);
-        painter.line(previous, point, color, t);
-        previous = point;
-    }
-    const float gap = r * 0.9f;
-    painter.line({c.x - r, c.y}, {c.x - gap * 0.5f, c.y}, color, t);
-    painter.line({c.x + gap * 0.5f, c.y}, {c.x + r, c.y}, color, t);
-    painter.line({c.x, c.y - r}, {c.x, c.y - gap * 0.5f}, color, t);
-    painter.line({c.x, c.y + gap * 0.5f}, {c.x, c.y + r}, color, t);
-}
-
-}
 
 ToolButton::ToolButton(ToolIcon icon, float size) : icon_(icon), size_(size) {}
 
@@ -113,30 +35,34 @@ void ToolButton::draw(Painter& painter)
         painter.fillRoundRect(rect(), fill, 6.f);
     }
 
-    const Vec2 center = rect().center();
-    const float r     = size_ * 0.28f;
-    const float line  = std::fmax(1.5f, size_ * 0.07f);
+    const char* name = "move";
     switch (icon_)
     {
     case ToolIcon::Move:
-        drawMove(painter, center, r, tint, line);
+        name = "move";
         break;
     case ToolIcon::Rotate:
-        drawRotate(painter, center, r, tint, line);
+        name = "rotate-3d";
         break;
     case ToolIcon::Scale:
-        drawScale(painter, center, r, tint, line);
+        name = "scale-3d";
         break;
     case ToolIcon::Focus:
-        drawFocus(painter, center, r, tint, line);
+        name = "focus";
         break;
     case ToolIcon::Play:
-        painter.triangle({center.x - r * 0.65f, center.y - r}, {center.x - r * 0.65f, center.y + r},
-                         {center.x + r * 0.95f, center.y}, tint);
+        name = "play";
         break;
     case ToolIcon::Stop:
-        painter.fillRoundRect({center.x - r * 0.8f, center.y - r * 0.8f, r * 1.6f, r * 1.6f}, tint, 2.f);
+        name = "square";
         break;
+    }
+    if (const auto icon = EditorIcons::get(name))
+    {
+        const float side  = size_ * 0.58f;
+        const Vec2 center = rect().center();
+        painter.image(icon->texture(), {std::floor(center.x - side * 0.5f), std::floor(center.y - side * 0.5f), side, side},
+                      tint);
     }
 }
 

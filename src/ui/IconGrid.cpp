@@ -121,6 +121,13 @@ void IconGrid::select(int index, bool additive)
 void IconGrid::drawIcon(Painter& painter, const IconItem& item, const Rect& box)
 {
     const Color base = item.color;
+    if (item.icon)
+    {
+        const float side = (std::min)(box.w, box.h);
+        painter.image(item.icon->texture(), {box.x + (box.w - side) * 0.5f, box.y + (box.h - side) * 0.5f, side, side},
+                      base);
+        return;
+    }
     if (item.folder)
     {
         const float tab = box.w * 0.42f;

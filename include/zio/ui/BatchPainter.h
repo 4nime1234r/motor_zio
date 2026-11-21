@@ -25,6 +25,7 @@ public:
     void fillRoundRect(const Rect& rect, Color color, float radius) override;
     void line(Vec2 from, Vec2 to, Color color, float thickness) override;
     void triangle(Vec2 a, Vec2 b, Vec2 c, Color color) override;
+    void image(std::uint32_t texture, const Rect& rect, Color tint) override;
     void text(Font& font, Vec2 topLeft, std::string_view utf8, Color color) override;
 
 private:

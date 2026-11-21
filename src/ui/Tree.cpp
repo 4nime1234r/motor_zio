@@ -15,7 +15,7 @@ namespace
 constexpr float kIndent   = 18.f;
 constexpr float kArrow    = 16.f;
 constexpr float kLeftPad  = 6.f;
-constexpr float kIconSize = 12.f;
+constexpr float kIconSize = 16.f;
 
 }
 
@@ -75,7 +75,7 @@ Vec2 TreeView::contentMinSize() const
     for (const Row& row : rows)
     {
         float w = kLeftPad + static_cast<float>(row.depth) * kIndent + kArrow;
-        if (row.item->iconColor)
+        if (row.item->iconColor || row.item->icon)
             w += kIconSize + 6.f;
         w += f.textWidth(row.item->text) + 12.f;
         width = (std::max)(width, w);
@@ -185,7 +185,13 @@ void TreeView::draw(Painter& painter)
         }
         x += kArrow;
 
-        if (row.item->iconColor)
+        if (row.item->icon)
+        {
+            painter.image(row.item->icon->texture(), {x, r.y + (r.h - kIconSize) * 0.5f, kIconSize, kIconSize},
+                          row.item->iconColor.value_or(t.text));
+            x += kIconSize + 6.f;
+        }
+        else if (row.item->iconColor)
         {
             painter.fillRoundRect({x, r.y + (r.h - kIconSize) * 0.5f, kIconSize, kIconSize}, *row.item->iconColor, 3.f);
             x += kIconSize + 6.f;

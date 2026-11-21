@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string_view>
 
 #include "zio/core/Platform.h"
@@ -22,6 +23,8 @@ public:
     virtual void line(Vec2 from, Vec2 to, Color color, float thickness)           = 0;
     virtual void triangle(Vec2 a, Vec2 b, Vec2 c, Color color)                    = 0;
     virtual void text(Font& font, Vec2 topLeft, std::string_view utf8, Color color) = 0;
+
+    virtual void image(std::uint32_t texture, const Rect& rect, Color tint) {}
 
     void roundRectWithBorder(const Rect& rect, Color fill, Color border, float radius, float thickness)
     {
