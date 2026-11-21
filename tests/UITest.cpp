@@ -405,6 +405,203 @@ void drawing()
     check(painter.texts >= 5 && painter.rounds > 0 && painter.rects > 0 && painter.lines >= 2, "todos los widgets se dibujan", static_cast<float>(painter.texts));
 }
 
+Vec2 centerOf(const Rect& r)
+{
+    return r.center();
+}
+
+void menus()
+{
+    Rig rig;
+    auto* box = rig.ctx.root().add<VBox>();
+    auto* bar = box->add<MenuBar>();
+    int saved = 0;
+    int inner = 0;
+    int disabledRuns = 0;
+    MenuItem disabled = MenuItem::item("Bloqueado", [&] { ++disabledRuns; });
+    disabled.enabled  = false;
+    bar->addMenu("Archivo", std::vector<MenuItem>{MenuItem::item("Guardar", [&] { ++saved; }, "Ctrl+S"), MenuItem::line(),
+                                                    MenuItem::submenuItem("Más", {MenuItem::item("Dentro", [&] { ++inner; })}),
+                                                    disabled});
+    bar->addMenu("Editar", std::vector<MenuItem>{MenuItem::item("Copiar")});
+    rig.update();
+
+    const Vec2 title0 = centerOf(bar->titleRect(0));
+    rig.click(title0.x, title0.y);
+    rig.update();
+    check(rig.ctx.hasPopups() && bar->openIndex() == 0, "un clic en un título abre su menú", static_cast<float>(bar->openIndex()));
+
+    const Vec2 title1 = centerOf(bar->titleRect(1));
+    rig.move(title1.x, title1.y);
+    rig.update();
+    check(bar->openIndex() == 1 && rig.ctx.popupCount() == 1, "con un menú abierto, pasar a otro título lo cambia", static_cast<float>(bar->openIndex()));
+
+    rig.move(title0.x, title0.y);
+    rig.update();
+    auto* popup = dynamic_cast<PopupMenu*>(rig.ctx.topPopup());
+    check(popup != nullptr, "el menú emergente existe");
+    if (!popup)
+        return;
+
+    const Vec2 save = centerOf(popup->itemRect(0));
+    rig.click(save.x, save.y);
+    check(saved == 1 && !rig.ctx.hasPopups() && bar->openIndex() == -1, "elegir una opción la ejecuta y cierra el menú", static_cast<float>(saved));
+
+    rig.click(title0.x, title0.y);
+    rig.update();
+    popup = dynamic_cast<PopupMenu*>(rig.ctx.topPopup());
+    const Vec2 blocked = centerOf(popup->itemRect(3));
+    rig.click(blocked.x, blocked.y);
+    check(disabledRuns == 0 && rig.ctx.hasPopups(), "una opción desactivada no se ejecuta ni cierra el menú");
+
+    const Vec2 more = centerOf(popup->itemRect(2));
+    rig.move(more.x, more.y);
+    rig.update();
+    check(rig.ctx.popupCount() == 2, "pasar sobre una opción con submenú lo abre", static_cast<float>(rig.ctx.popupCount()));
+    auto* sub = dynamic_cast<PopupMenu*>(rig.ctx.topPopup());
+    if (sub)
+    {
+        const Vec2 inside = centerOf(sub->itemRect(0));
+        rig.move(inside.x, inside.y);
+        rig.click(inside.x, inside.y);
+        check(inner == 1 && !rig.ctx.hasPopups(), "una opción del submenú se ejecuta y cierra todo", static_cast<float>(inner));
+    }
+
+    rig.click(title0.x, title0.y);
+    rig.update();
+    check(rig.ctx.mouseButton(MouseButton::Left, true, {300.f, 250.f}, {}) && !rig.ctx.hasPopups(),
+          "un clic fuera cierra el menú y no pasa al widget de debajo");
+    rig.up(300.f, 250.f);
+
+    rig.click(title0.x, title0.y);
+    rig.update();
+    rig.key(KeyCode::Down);
+    rig.key(KeyCode::Enter);
+    check(saved == 2 && !rig.ctx.hasPopups(), "el menú se maneja con teclado: Abajo y Enter", static_cast<float>(saved));
+
+    rig.click(title0.x, title0.y);
+    rig.update();
+    rig.key(KeyCode::Escape);
+    check(!rig.ctx.hasPopups(), "Escape cierra el menú");
+}
+
+void optionButton()
+{
+    Rig rig;
+    auto* box = rig.ctx.root().add<VBox>();
+    auto* opt = box->add<OptionButton>();
+    opt->setItems({"Bajo", "Medio", "Alto"});
+    int picked = -1;
+    opt->setOnSelected([&](int i) { picked = i; });
+    rig.update();
+    check(opt->selected() == 0, "la lista desplegable empieza en la primera opción");
+
+    rig.click(40.f, 15.f);
+    rig.update();
+    auto* popup = dynamic_cast<PopupMenu*>(rig.ctx.topPopup());
+    check(popup != nullptr && popup->items().size() == 3, "pulsar la lista muestra las opciones");
+    if (!popup)
+        return;
+    const Vec2 third = centerOf(popup->itemRect(2));
+    rig.click(third.x, third.y);
+    check(opt->selected() == 2 && picked == 2 && !rig.ctx.hasPopups(), "elegir una opción la selecciona y avisa", static_cast<float>(picked));
+}
+
+void tooltips()
+{
+    Rig rig;
+    auto* box = rig.ctx.root().add<VBox>();
+    auto* btn = box->add<Button>(std::string("Ayuda"));
+    btn->setTooltip("Texto de ayuda");
+    rig.update();
+
+    rig.move(30.f, 15.f);
+    rig.ctx.update(0.3f);
+    rig.ctx.update(0.3f);
+    check(!rig.ctx.tooltipVisible(), "el tooltip no aparece enseguida");
+    rig.ctx.update(0.3f);
+    check(rig.ctx.tooltipVisible(), "el tooltip aparece tras medio segundo");
+    rig.move(300.f, 250.f);
+    rig.ctx.update(0.f);
+    check(!rig.ctx.tooltipVisible(), "el tooltip desaparece al salir del widget");
+}
+
+void tree()
+{
+    Rig rig;
+    auto* scroll = rig.ctx.root().add<ScrollContainer>(true, false);
+    auto* view   = scroll->add<TreeView>();
+    TreeItem* a  = view->root()->add("A");
+    TreeItem* a1 = a->add("A1");
+    TreeItem* a2 = a->add("A2");
+    TreeItem* b  = view->root()->add("B");
+    int selectionEvents   = 0;
+    TreeItem* activated   = nullptr;
+    TreeItem* contextItem = nullptr;
+    view->setOnSelectionChanged([&] { ++selectionEvents; });
+    view->setOnActivated([&](TreeItem* i) { activated = i; });
+    view->setOnContextMenu([&](TreeItem* i, Vec2) { contextItem = i; });
+    rig.update();
+
+    check(view->visibleRowCount() == 4, "el árbol muestra los nodos desplegados", static_cast<float>(view->visibleRowCount()));
+
+    Vec2 row3 = centerOf(view->rowRect(3));
+    rig.click(row3.x + 40.f, row3.y);
+    check(b->selected && !a->selected && view->current() == b && selectionEvents >= 1, "un clic selecciona una fila");
+
+    Vec2 row0 = centerOf(view->rowRect(0));
+    Modifiers withCtrl;
+    withCtrl.ctrl = true;
+    rig.down(row0.x + 60.f, row0.y, withCtrl);
+    rig.up(row0.x + 60.f, row0.y, withCtrl);
+    check(a->selected && b->selected, "Ctrl+clic añade a la selección", static_cast<float>(view->selection().size()));
+
+    const Vec2 arrow = centerOf(view->arrowRect(0));
+    rig.click(arrow.x, arrow.y);
+    rig.update();
+    check(!a->expanded && view->visibleRowCount() == 2, "pulsar la flecha pliega el nodo", static_cast<float>(view->visibleRowCount()));
+
+    rig.click(arrow.x, arrow.y);
+    rig.update();
+    check(a->expanded && view->visibleRowCount() == 4, "y la flecha lo vuelve a desplegar");
+
+    row0 = centerOf(view->rowRect(0));
+    rig.click(row0.x + 60.f, row0.y);
+    rig.click(row0.x + 60.f, row0.y);
+    check(activated == a && !a->expanded, "doble clic activa el nodo y alterna su despliegue");
+    a->expanded = true;
+    rig.update();
+    view->select(a, false);
+    rig.key(KeyCode::Down);
+    check(view->current() == a1 && a1->selected && !a->selected, "las flechas mueven la selección");
+
+    rig.key(KeyCode::Down, shift());
+    check(a1->selected && a2->selected, "Mayús+flecha amplía la selección");
+
+    view->select(a, false);
+    rig.key(KeyCode::Left);
+    rig.update();
+    check(!a->expanded, "Izquierda pliega un nodo desplegado");
+    rig.key(KeyCode::Right);
+    rig.update();
+    check(a->expanded, "Derecha lo despliega");
+
+    row3 = centerOf(view->rowRect(3));
+    rig.ctx.mouseMove({row3.x + 40.f, row3.y});
+    rig.ctx.mouseButton(MouseButton::Right, true, {row3.x + 40.f, row3.y}, {});
+    rig.ctx.mouseButton(MouseButton::Right, false, {row3.x + 40.f, row3.y}, {});
+    check(contextItem == b && b->selected, "clic derecho selecciona y pide el menú contextual");
+
+    view->root()->clear();
+    for (int i = 0; i < 40; ++i)
+        view->root()->add("Fila " + std::to_string(i));
+    rig.update();
+    rig.click(100.f, 10.f);
+    rig.key(KeyCode::End);
+    rig.update();
+    check(scroll->scroll().y > 100.f, "al ir al final el árbol se desplaza para mostrar la fila", scroll->scroll().y);
+}
+
 void lifetime()
 {
     Rig rig;
@@ -432,6 +629,10 @@ int main()
     scrolling();
     splitting();
     tabs();
+    menus();
+    optionButton();
+    tooltips();
+    tree();
     drawing();
     lifetime();
 

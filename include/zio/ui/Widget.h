@@ -74,6 +74,8 @@ public:
     void setMouseTransparent(bool transparent) { mouseTransparent_ = transparent; }
     bool mouseTransparent() const { return mouseTransparent_; }
     void setClipChildren(bool clip) { clipChildren_ = clip; }
+    void setTooltip(std::string text) { tooltip_ = std::move(text); }
+    const std::string& tooltip() const { return tooltip_; }
     bool clipChildren() const { return clipChildren_; }
 
     bool hovered() const { return hovered_; }
@@ -120,6 +122,7 @@ private:
     Context* context_ = nullptr;
     std::vector<std::unique_ptr<Widget>> children_;
     std::string name_;
+    std::string tooltip_;
     Rect rect_;
     Vec2 customMin_ = {0.f, 0.f};
     float stretch_  = 1.f;

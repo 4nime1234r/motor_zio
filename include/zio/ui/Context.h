@@ -1,7 +1,9 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "zio/core/Platform.h"
 #include "zio/ui/Theme.h"
@@ -47,6 +49,16 @@ public:
     Cursor cursor() const { return cursor_; }
     double time() const { return time_; }
 
+    Widget* openPopup(std::unique_ptr<Widget> popup);
+    void closePopups();
+    void closePopupsAbove(Widget* popup);
+    bool hasPopups() const;
+    Widget* topPopup() const;
+    std::size_t popupCount() const;
+    void closeTopPopup();
+    Vec2 mousePosition() const { return lastMouse_; }
+    bool tooltipVisible() const { return tooltip_ != nullptr; }
+
     void setClipboardHandlers(std::function<std::string()> getter, std::function<void(const std::string&)> setter);
     std::string clipboard() const;
     void setClipboard(const std::string& text);
@@ -55,10 +67,20 @@ private:
     friend class Widget;
 
     void forget(Widget* widget);
+    void collectGarbage();
+    void hideTooltip();
+    void updateTooltip(float dt);
+    std::vector<Widget*> popupList() const;
+    void closePopupWidget(Widget* popup);
     void focusNext(bool backwards);
     void updateHover(Vec2 position);
 
     std::unique_ptr<Widget> root_;
+    std::unique_ptr<Widget> overlay_;
+    std::vector<std::unique_ptr<Widget>> graveyard_;
+    Widget* tooltip_       = nullptr;
+    Widget* tooltipTarget_ = nullptr;
+    float tooltipTimer_    = 0.f;
     Theme theme_;
     Vec2 size_ = {800.f, 600.f};
     Widget* hovered_  = nullptr;

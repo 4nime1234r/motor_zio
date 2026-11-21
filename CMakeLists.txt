@@ -63,8 +63,10 @@ add_library(engine STATIC
     src/ui/Controls.cpp
     src/ui/Core.cpp
     src/ui/EngineHost.cpp
+    src/ui/Menus.cpp
     src/ui/GdiFont.cpp
     src/ui/Text.cpp
+    src/ui/Tree.cpp
 )
 add_library(zio::engine ALIAS engine)
 set_target_properties(engine PROPERTIES OUTPUT_NAME zio_engine)

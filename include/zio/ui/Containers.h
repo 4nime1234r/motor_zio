@@ -78,6 +78,7 @@ public:
 
     Vec2 scroll() const { return scroll_; }
     void setScroll(Vec2 scroll);
+    void ensureVisible(const Rect& target);
     Vec2 contentSize() const { return contentSize_; }
 
     Vec2 contentMinSize() const override { return {0.f, 0.f}; }

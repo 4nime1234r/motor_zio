@@ -122,6 +122,19 @@ void ScrollContainer::setScroll(Vec2 scroll)
     clampScroll();
 }
 
+void ScrollContainer::ensureVisible(const Rect& target)
+{
+    if (target.y < viewport_.y)
+        scroll_.y -= viewport_.y - target.y;
+    else if (target.bottom() > viewport_.bottom())
+        scroll_.y += target.bottom() - viewport_.bottom();
+    if (target.x < viewport_.x)
+        scroll_.x -= viewport_.x - target.x;
+    else if (target.right() > viewport_.right())
+        scroll_.x += target.right() - viewport_.right();
+    clampScroll();
+}
+
 void ScrollContainer::clampScroll()
 {
     const float maxX = (std::max)(0.f, contentSize_.x - viewport_.w);

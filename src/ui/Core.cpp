@@ -3,6 +3,7 @@
 
 #include "zio/ui/Containers.h"
 #include "zio/ui/Context.h"
+#include "zio/ui/Menus.h"
 #include "zio/ui/Font.h"
 #include "zio/ui/Text.h"
 #include "zio/ui/Theme.h"
@@ -181,9 +182,18 @@ Context::Context()
     theme_ = makeZionTheme(createFixedFont(14.f));
     root_->setMouseTransparent(true);
     root_->attachContext(this);
+
+    overlay_ = std::make_unique<Widget>();
+    overlay_->setMouseTransparent(true);
+    overlay_->attachContext(this);
 }
 
-Context::~Context() = default;
+Context::~Context()
+{
+    overlay_.reset();
+    graveyard_.clear();
+    root_.reset();
+}
 
 void Context::forget(Widget* widget)
 {
@@ -193,25 +203,149 @@ void Context::forget(Widget* widget)
         focused_ = nullptr;
     if (captured_ == widget)
         captured_ = nullptr;
+    if (tooltip_ == widget)
+        tooltip_ = nullptr;
+    if (tooltipTarget_ == widget)
+        tooltipTarget_ = nullptr;
+}
+
+void Context::collectGarbage()
+{
+    graveyard_.clear();
+}
+
+std::vector<Widget*> Context::popupList() const
+{
+    std::vector<Widget*> list;
+    if (!overlay_)
+        return list;
+    for (const auto& child : overlay_->children())
+        if (child.get() != tooltip_)
+            list.push_back(child.get());
+    return list;
+}
+
+bool Context::hasPopups() const
+{
+    return !popupList().empty();
+}
+
+std::size_t Context::popupCount() const
+{
+    return popupList().size();
+}
+
+Widget* Context::topPopup() const
+{
+    const auto list = popupList();
+    return list.empty() ? nullptr : list.back();
+}
+
+Widget* Context::openPopup(std::unique_ptr<Widget> popup)
+{
+    hideTooltip();
+    return overlay_->addChild(std::move(popup));
+}
+
+void Context::closePopupWidget(Widget* popup)
+{
+    if (auto* menu = dynamic_cast<PopupMenu*>(popup))
+        menu->notifyClosed();
+    if (auto removed = overlay_->removeChild(popup))
+        graveyard_.push_back(std::move(removed));
+}
+
+void Context::closePopups()
+{
+    if (!overlay_)
+        return;
+    auto list = popupList();
+    for (auto it = list.rbegin(); it != list.rend(); ++it)
+        closePopupWidget(*it);
+}
+
+void Context::closePopupsAbove(Widget* popup)
+{
+    if (!overlay_ || !popup)
+        return;
+    const auto list = popupList();
+    bool after      = false;
+    std::vector<Widget*> toClose;
+    for (Widget* w : list)
+    {
+        if (after)
+            toClose.push_back(w);
+        if (w == popup)
+            after = true;
+    }
+    for (auto it = toClose.rbegin(); it != toClose.rend(); ++it)
+        closePopupWidget(*it);
+}
+
+void Context::closeTopPopup()
+{
+    if (Widget* top = topPopup())
+        closePopupWidget(top);
+}
+
+void Context::hideTooltip()
+{
+    if (!tooltip_ || !overlay_)
+        return;
+    Widget* shown = tooltip_;
+    tooltip_      = nullptr;
+    if (auto removed = overlay_->removeChild(shown))
+        graveyard_.push_back(std::move(removed));
+}
+
+void Context::updateTooltip(float dt)
+{
+    Widget* target = hovered_;
+    if (hasPopups() || !target || target->tooltip().empty() || captured_)
+    {
+        hideTooltip();
+        tooltipTimer_  = 0.f;
+        tooltipTarget_ = target;
+        return;
+    }
+    if (target != tooltipTarget_)
+    {
+        tooltipTarget_ = target;
+        tooltipTimer_  = 0.f;
+        hideTooltip();
+        return;
+    }
+    tooltipTimer_ += dt;
+    if (!tooltip_ && tooltipTimer_ >= 0.5f)
+        tooltip_ = overlay_->addChild(std::make_unique<Tooltip>(target->tooltip(), lastMouse_));
 }
 
 void Context::update(float dt)
 {
+    collectGarbage();
     time_ += static_cast<double>(dt);
-    root_->setRect({0.f, 0.f, size_.x, size_.y});
+    const Rect window = {0.f, 0.f, size_.x, size_.y};
+    root_->setRect(window);
     root_->layoutTree();
+    overlay_->setRect(window);
+    overlay_->layoutTree();
     root_->updateTree(dt);
+    overlay_->updateTree(dt);
     updateHover(lastMouse_);
+    updateTooltip(dt);
 }
 
 void Context::draw(Painter& painter)
 {
     root_->drawTree(painter);
+    overlay_->drawTree(painter);
 }
 
 void Context::updateHover(Vec2 position)
 {
-    Widget* next = root_->hitTest(position);
+    Widget* next = overlay_->hitTest(position);
+    if (!next)
+        next = root_->hitTest(position);
     if (next == hovered_)
         return;
     Widget* previous = hovered_;
@@ -241,6 +375,7 @@ bool Context::mouseMove(Vec2 position)
 
     Widget* owner = captured_ ? captured_ : hovered_;
     cursor_       = owner ? owner->cursorAt(position) : Cursor::Arrow;
+    collectGarbage();
     return wantsMouse();
 }
 
@@ -251,6 +386,15 @@ bool Context::mouseButton(events::MouseButton button, bool down, Vec2 position, 
 
     if (down)
     {
+        hideTooltip();
+
+        if (hasPopups() && !overlay_->hitTest(position))
+        {
+            closePopups();
+            collectGarbage();
+            return true;
+        }
+
         const Vec2 delta = position - lastClickPosition_;
         if (button == lastClickButton_ && time_ - lastClickTime_ < 0.4 && delta.length() < 6.f)
             ++clickCount_;
@@ -264,6 +408,7 @@ bool Context::mouseButton(events::MouseButton button, bool down, Vec2 position, 
         if (!target)
         {
             setFocus(nullptr);
+            collectGarbage();
             return false;
         }
 
@@ -276,7 +421,12 @@ bool Context::mouseButton(events::MouseButton button, bool down, Vec2 position, 
                 break;
             }
         }
-        setFocus(focusTarget);
+        bool inOverlay = false;
+        for (Widget* w = target; w; w = w->parent())
+            if (w == overlay_.get())
+                inOverlay = true;
+        if (!inOverlay)
+            setFocus(focusTarget);
 
         MouseEvent event;
         event.position  = position;
@@ -292,6 +442,7 @@ bool Context::mouseButton(events::MouseButton button, bool down, Vec2 position, 
                 break;
             }
         }
+        collectGarbage();
         return true;
     }
 
@@ -316,6 +467,7 @@ bool Context::mouseButton(events::MouseButton button, bool down, Vec2 position, 
                 handled = w->onMouseUp(event);
     }
     updateHover(position);
+    collectGarbage();
     return handled || hovered_ != nullptr;
 }
 
@@ -328,18 +480,27 @@ bool Context::mouseScroll(Vec2 position, Vec2 delta, Modifiers modifiers)
     for (Widget* w = hovered_; w && !handled; w = w->parent())
         if (w->enabledInTree())
             handled = w->onMouseScroll(position, delta, modifiers);
+    collectGarbage();
     return handled || hovered_ != nullptr;
 }
 
 bool Context::key(events::KeyCode code, bool down, bool repeat, Modifiers modifiers)
 {
-    if (!focused_)
-        return false;
-
     KeyEvent event;
     event.code      = code;
     event.modifiers = modifiers;
     event.repeat    = repeat;
+
+    if (Widget* popup = topPopup())
+    {
+        if (down)
+            popup->onKeyDown(event);
+        collectGarbage();
+        return true;
+    }
+
+    if (!focused_)
+        return false;
 
     bool handled = false;
     for (Widget* w = focused_; w && !handled; w = w->parent())
@@ -351,14 +512,19 @@ bool Context::key(events::KeyCode code, bool down, bool repeat, Modifiers modifi
         focusNext(modifiers.shift);
         handled = true;
     }
+    collectGarbage();
     return handled;
 }
 
 bool Context::text(char32_t codepoint)
 {
+    if (hasPopups())
+        return true;
     if (!focused_ || !focused_->enabledInTree())
         return false;
-    return focused_->onChar(codepoint);
+    const bool handled = focused_->onChar(codepoint);
+    collectGarbage();
+    return handled;
 }
 
 void Context::setFocus(Widget* widget)
