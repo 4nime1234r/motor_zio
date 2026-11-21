@@ -13,6 +13,7 @@
 #include "core/LayoutSettings.h"
 #include "panels/ContentBrowserPanel.h"
 #include "panels/DiagnosticsPanel.h"
+#include "panels/FileExplorerPanel.h"
 #include "panels/InspectorPanel.h"
 #include "panels/SceneHierarchyPanel.h"
 #include "update/Updater.h"
@@ -105,6 +106,8 @@ private:
     InspectorPanel inspectorPanel_;
     ContentBrowserPanel contentBrowserPanel_;
     DiagnosticsPanel diagnosticsPanel_;
+    FileExplorerPanel fileExplorerPanel_;
+    bool focusFilesTab_ = false;
 
     Updater updater_;
     bool restartAfterClose_ = false;

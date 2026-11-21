@@ -42,6 +42,7 @@ add_executable(zio_editor
     src/panels/SceneHierarchyPanel.cpp
     src/panels/InspectorPanel.cpp
     src/panels/DiagnosticsPanel.cpp
+    src/panels/FileExplorerPanel.cpp
     src/update/Updater.cpp
 
     ${IMGUI_DIR}/imgui.cpp

@@ -16,7 +16,8 @@ namespace zio_editor
 namespace
 {
 
-constexpr const char* kRequiredDirs[] = {"assets", "assets/models", "assets/textures", "assets/scenes"};
+constexpr const char* kRequiredDirs[] = {"assets",          "assets/models", "assets/textures",
+                                          "assets/scenes",   "assets/audio",  "assets/scripts"};
 constexpr std::uintmax_t kMaxProjectFileBytes = 1024 * 1024;
 constexpr std::size_t kMaxNameLength          = 64;
 

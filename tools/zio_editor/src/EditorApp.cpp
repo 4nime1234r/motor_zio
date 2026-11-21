@@ -881,7 +881,8 @@ void EditorApp::buildDefaultLayout(std::uint32_t dockspaceId, float width, float
     };
     stack(leftId, left, ImGuiDir_Up);
     stack(rightId, right, ImGuiDir_Up);
-    stack(bottomId, bottom, ImGuiDir_Left);
+    for (auto it = bottom.rbegin(); it != bottom.rend(); ++it)
+        ImGui::DockBuilderDockWindow(panelTitle(*it), bottomId);
 
     ImGui::DockBuilderFinish(root);
 }
@@ -1109,7 +1110,8 @@ void EditorApp::drawUi(float frameTimeMs)
     if (resetLayout_ || ImGui::DockBuilderGetNode(dockspaceId) == nullptr)
     {
         buildDefaultLayout(dockspaceId, viewport->WorkSize.x, viewport->WorkSize.y);
-        resetLayout_ = false;
+        resetLayout_   = false;
+        focusFilesTab_ = true;
     }
     ImGui::DockSpaceOverViewport(dockspaceId, viewport,
                                  ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingOverCentralNode);
@@ -1147,7 +1149,14 @@ void EditorApp::drawUi(float frameTimeMs)
     hierarchyPanel_.draw(context_);
     inspectorPanel_.draw(context_);
     contentBrowserPanel_.draw(context_);
+    fileExplorerPanel_.draw(context_);
     diagnosticsPanel_.draw(frameTimeMs);
+
+    if (focusFilesTab_)
+    {
+        ImGui::SetWindowFocus(panelTitle(PanelFiles));
+        focusFilesTab_ = false;
+    }
 
     drawViewportToolbar();
 }

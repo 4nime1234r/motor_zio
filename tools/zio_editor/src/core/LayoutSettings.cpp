@@ -13,7 +13,7 @@ namespace zio_editor
 namespace
 {
 
-constexpr const char* kKeys[PanelCount] = {"jerarquia", "contenido", "inspector", "rendimiento"};
+constexpr const char* kKeys[PanelCount] = {"jerarquia", "contenido", "inspector", "archivos", "rendimiento"};
 
 const char* sideKey(PanelSide side)
 {
@@ -61,6 +61,8 @@ const char* panelTitle(int panel)
         return "Contenido";
     case PanelInspector:
         return "Inspector";
+    case PanelFiles:
+        return "Archivos";
     case PanelPerformance:
         return "Rendimiento";
     default:

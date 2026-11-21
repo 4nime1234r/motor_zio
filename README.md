@@ -36,6 +36,7 @@ El editor vive en `tools/zio_editor` y está hecho con Dear ImGui.
 - Crear y abrir proyectos. Cada proyecto es una carpeta con `project.zio` y subcarpetas de modelos, texturas y escenas.
 - Abrir, guardar y guardar como escenas 3D, con aviso si hay cambios sin guardar.
 - Añadir nodos vacíos, cubos y modelos `.obj`.
+- Panel de archivos del proyecto, con árbol de carpetas y cuadrícula de iconos por tipo (escenas, modelos, texturas, audio y scripts de C++, C# y Lua).
 - Visor 3D con cuadrícula, selección por clic y gizmos para mover, rotar y escalar.
 - Selección múltiple, copiar, pegar y duplicar.
 - Botón Jugar para ver la escena con su cámara y detenerla restaurando el estado editado.
