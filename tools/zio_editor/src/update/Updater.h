@@ -25,6 +25,9 @@ struct UpdateStatus
     std::string version;
     float progress = 0.f;
     std::string error;
+    std::string notes;
+    bool checked  = false;
+    bool upToDate = false;
 };
 
 class Updater
@@ -43,11 +46,13 @@ public:
     UpdateStatus status() const;
     void download();
     void retry();
+    bool checkNow();
     void finish(bool restart);
 
 private:
     void run();
     void check();
+    void loadNotes(const std::string& version);
     void fetch();
     void setState(UpdateState state, std::string error = {});
 

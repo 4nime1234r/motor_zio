@@ -34,6 +34,7 @@ add_executable(zio_editor
     src/ui/Panels.cpp
     src/ui/ToolButton.cpp
     src/ui/ViewportController.cpp
+    src/update/ReleaseNotes.cpp
     src/update/Updater.cpp
 )
 

@@ -8,6 +8,7 @@
 
 #include "core/RecentProject.h"
 #include "ui/EditorIcons.h"
+#include "update/ReleaseNotes.h"
 #include "zio/input/InputManager.h"
 #include "zio/platform/Window.h"
 #include "zio/render/Device.h"
@@ -391,6 +392,7 @@ void EditorApp::buildTopBar(zio::ui::Widget* page)
     menu->addMenu("Editar", [this]() { return editItems(); });
     menu->addMenu("Objeto", [this]() { return addObjectItems(); });
     menu->addMenu("Ver", [this]() { return viewItems(); });
+    menu->addMenu("Ayuda", [this]() { return helpItems(); });
 
     row->add<zio::ui::Widget>()->setExpand(true, false);
     auto* mode = row->add<zio::ui::Button>(std::string("3D"));
@@ -400,6 +402,10 @@ void EditorApp::buildTopBar(zio::ui::Widget* page)
     mode->setToggled(true);
     mode->setOnToggled([mode](bool) { mode->setToggled(true); });
     row->add<zio::ui::Widget>()->setExpand(true, false);
+    updateBadge_ = row->add<zio::ui::Button>(std::string());
+    updateBadge_->setPrimary(true);
+    updateBadge_->setVisible(false);
+    updateBadge_->setOnClick([this]() { showUpdate(); });
     play_ = row->add<ToolButton>(ToolIcon::Play, 28.f);
     play_->setTooltip("Jugar (F5)");
     play_->setOnClick([this]() {
@@ -427,13 +433,6 @@ void EditorApp::buildStatusBar(zio::ui::Widget* page)
     statusScene_->setColor(theme.textDim);
     statusError_ = row->add<zio::ui::Label>(std::string());
     statusError_->setColor(theme.danger);
-
-    updateText_ = row->add<zio::ui::Label>(std::string());
-    updateText_->setColor(theme.accentHover);
-    updateProgress_ = row->add<zio::ui::ProgressBar>();
-    updateProgress_->setMinSize({160.f, 8.f});
-    updateButton_ = row->add<zio::ui::Button>(std::string());
-    updateButton_->setMinSize({0.f, 24.f});
 
     row->add<zio::ui::Widget>()->setExpand(true, false);
     statusRight_ = row->add<zio::ui::Label>(std::string());
@@ -472,43 +471,159 @@ void EditorApp::buildUi()
 void EditorApp::refreshUpdate()
 {
     const UpdateStatus update = updater_.status();
-    const bool show           = Updater::enabled() && update.state != UpdateState::Idle && update.state != UpdateState::Checking;
+    const UpdateState state   = update.state;
 
-    updateText_->setVisible(show);
-    updateButton_->setVisible(show && update.state != UpdateState::Downloading);
-    updateProgress_->setVisible(show && update.state == UpdateState::Downloading);
-    if (!show)
+    const bool badge = state == UpdateState::Available || state == UpdateState::Downloading ||
+                       state == UpdateState::Downloaded;
+    updateBadge_->setVisible(badge);
+    if (badge)
+    {
+        if (state == UpdateState::Available)
+            updateBadge_->setText("Actualización disponible: v" + update.version);
+        else if (state == UpdateState::Downloading)
+            updateBadge_->setText("Descargando v" + update.version + "  " +
+                                  std::to_string(static_cast<int>(update.progress * 100.f)) + "%");
+        else
+            updateBadge_->setText("Reiniciar para actualizar a v" + update.version);
+    }
+
+    if (state != lastUpdateState_)
+    {
+        lastUpdateState_ = state;
+        if (state == UpdateState::Available)
+            log("Actualización disponible: v" + update.version + ". Pulsa el aviso de arriba para ver las novedades.");
+        else if (state == UpdateState::Downloaded)
+            log("Actualización v" + update.version + " lista: reinicia el editor para instalarla.");
+        else if (state == UpdateState::Error)
+            log(update.error, true);
+    }
+
+    if (manualCheck_ && state != UpdateState::Checking)
+    {
+        manualCheck_ = false;
+        if (state == UpdateState::Available)
+            showUpdate();
+        else if (state == UpdateState::Error)
+            showInfo("Buscar actualizaciones", update.error);
+        else
+            showInfo("Buscar actualizaciones", std::string("Zio está al día. Tienes la versión v") + ZIO_VERSION + ", la más reciente.");
+    }
+}
+
+void EditorApp::checkUpdates()
+{
+    if (!Updater::enabled())
+    {
+        showInfo("Buscar actualizaciones",
+                 "Esta compilación no tiene activadas las actualizaciones. Usa la versión publicada en GitHub para recibirlas.");
+        return;
+    }
+    const UpdateState state = updater_.status().state;
+    if (state == UpdateState::Available || state == UpdateState::Downloading || state == UpdateState::Downloaded)
+    {
+        showUpdate();
+        return;
+    }
+    if (updater_.checkNow())
+    {
+        manualCheck_ = true;
+        log("Buscando actualizaciones...");
+    }
+    else
+    {
+        showInfo("Buscar actualizaciones", "Todavía se está iniciando la comprobación; inténtalo en unos segundos.");
+    }
+}
+
+std::vector<MenuItem> EditorApp::helpItems()
+{
+    const UpdateState state = updater_.status().state;
+    MenuItem check          = MenuItem::item("Buscar actualizaciones...", [this]() { checkUpdates(); });
+    MenuItem news           = MenuItem::item("Novedades de la actualización...", [this]() { showUpdate(); });
+    news.enabled            = state == UpdateState::Available || state == UpdateState::Downloading ||
+                   state == UpdateState::Downloaded;
+    MenuItem version = MenuItem::item(std::string("Zio v") + ZIO_VERSION);
+    version.enabled  = false;
+    return {std::move(check), std::move(news), MenuItem::line(), std::move(version)};
+}
+
+void EditorApp::showInfo(const std::string& title, const std::string& message)
+{
+    using namespace zio::ui;
+    auto dialog  = std::make_unique<Dialog>(title);
+    auto content = std::make_unique<VBox>();
+    std::string text = message;
+    for (const NoteLine& line : formatReleaseNotes(text, 70))
+        content->add<Label>(line.text);
+    dialog->setContent(std::move(content));
+    dialog->setWidth(520.f);
+    Dialog* raw = dialog.get();
+    dialog->addButton("Cerrar", [raw]() { raw->cancel(); }, true);
+    ui_->openPopup(std::move(dialog));
+}
+
+void EditorApp::showUpdate()
+{
+    using namespace zio::ui;
+    const UpdateStatus update = updater_.status();
+    if (update.state != UpdateState::Available && update.state != UpdateState::Downloading &&
+        update.state != UpdateState::Downloaded)
         return;
 
-    switch (update.state)
+    auto dialog  = std::make_unique<Dialog>("Actualización de Zio");
+    auto content = std::make_unique<VBox>();
+    content->add<Label>(std::string("Versión instalada: v") + ZIO_VERSION + "     Nueva versión: v" + update.version)
+        ->setBold(true);
+    content->add<Label>(std::string("Novedades"))->setColor(ui_->theme().textDim);
+
+    auto* scroll = content->add<ScrollContainer>(true, false);
+    scroll->setMinSize({560.f, 240.f});
+    auto* lines = scroll->add<VBox>();
+    lines->setSeparation(2.f);
+    const auto notes = formatReleaseNotes(update.notes, 66);
+    if (notes.empty())
+        lines->add<Label>(std::string("Esta versión no trae notas publicadas."))->setColor(ui_->theme().textDim);
+    for (const NoteLine& line : notes)
     {
-    case UpdateState::Available:
-        updateText_->setText("Actualización disponible: v" + update.version);
-        updateButton_->setText("Descargar");
-        updateButton_->setOnClick([this]() { updater_.download(); });
-        break;
-    case UpdateState::Downloading:
-        updateText_->setText("Descargando v" + update.version);
-        updateProgress_->setValue(update.progress);
-        break;
-    case UpdateState::Downloaded:
-        updateText_->setText("Zio v" + update.version + " lista para instalar");
-        updateButton_->setText("Reiniciar y actualizar");
-        updateButton_->setOnClick([this]() {
+        auto* label = lines->add<Label>(line.text.empty() ? std::string(" ") : line.text);
+        if (line.heading)
+        {
+            label->setBold(true);
+            label->setColor(ui_->theme().accentHover);
+        }
+    }
+    if (update.state == UpdateState::Downloading)
+        content->add<Label>("Descargando... " + std::to_string(static_cast<int>(update.progress * 100.f)) + "%")
+            ->setColor(ui_->theme().textDim);
+    dialog->setContent(std::move(content));
+    dialog->setWidth(620.f);
+
+    Dialog* raw = dialog.get();
+    if (update.state == UpdateState::Available)
+    {
+        dialog->addButton("Más tarde", [raw]() { raw->cancel(); });
+        dialog->addButton("Descargar", [this, raw]() {
+            raw->close();
+            updater_.download();
+            log("Descargando la actualización...");
+        }, true);
+    }
+    else if (update.state == UpdateState::Downloaded)
+    {
+        dialog->addButton("Más tarde", [raw]() { raw->cancel(); });
+        dialog->addButton("Reiniciar y actualizar", [this, raw]() {
+            raw->close();
             if (context_.hasPending())
                 return;
             restartAfterClose_ = true;
             context_.request(Action{ActionKind::CloseWindow, {}, {}});
-        });
-        break;
-    case UpdateState::Error:
-        updateText_->setText(update.error);
-        updateButton_->setText("Reintentar");
-        updateButton_->setOnClick([this]() { updater_.retry(); });
-        break;
-    default:
-        break;
+        }, true);
     }
+    else
+    {
+        dialog->addButton("Cerrar", [raw]() { raw->cancel(); }, true);
+    }
+    ui_->openPopup(std::move(dialog));
 }
 
 void EditorApp::refreshStatus()

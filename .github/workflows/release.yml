@@ -56,7 +56,11 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Ya existe una release para $TAG, se reutilizará."
           else
-            gh release create "$TAG" --draft --title "Zio ${{ steps.tag.outputs.version }}" --generate-notes
+            if [ -f RELEASE_NOTES.md ]; then
+              gh release create "$TAG" --draft --title "Zio ${{ steps.tag.outputs.version }}" --notes-file RELEASE_NOTES.md
+            else
+              gh release create "$TAG" --draft --title "Zio ${{ steps.tag.outputs.version }}" --generate-notes
+            fi
           fi
 
   build:

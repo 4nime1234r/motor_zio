@@ -59,12 +59,16 @@ private:
     std::vector<zio::ui::MenuItem> projectItems();
     std::vector<zio::ui::MenuItem> sceneItems();
     std::vector<zio::ui::MenuItem> viewItems();
+    std::vector<zio::ui::MenuItem> helpItems();
     std::vector<zio::ui::MenuItem> sideItems(const std::string& id);
 
     void showNewProject();
     void showOpenProject();
     void showSaveAs();
     void showUnsaved();
+    void showUpdate();
+    void showInfo(const std::string& title, const std::string& message);
+    void checkUpdates();
     std::string describePending() const;
 
     EditorContext context_;
@@ -88,9 +92,9 @@ private:
     std::string loggedError_;
     zio::ui::Label* statusError_    = nullptr;
     zio::ui::Label* statusRight_    = nullptr;
-    zio::ui::Label* updateText_     = nullptr;
-    zio::ui::Button* updateButton_  = nullptr;
-    zio::ui::ProgressBar* updateProgress_ = nullptr;
+    zio::ui::Button* updateBadge_   = nullptr;
+    bool manualCheck_               = false;
+    UpdateState lastUpdateState_    = UpdateState::Idle;
 
     std::filesystem::path startupProject_;
     std::filesystem::path recentFile_;

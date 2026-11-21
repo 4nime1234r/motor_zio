@@ -136,6 +136,8 @@ projects/         Proyectos de ejemplo
 cmake/            Scripts y plantillas de CMake
 ```
 
+Para publicar una versión nueva: sube el número de `VERSION` en `CMakeLists.txt`, escribe las novedades en `RELEASE_NOTES.md` y haz push. El editor muestra esas notas en el aviso de actualización (menú Ayuda > Buscar actualizaciones).
+
 ## Licencia
 
 Zio es software propietario. Copyright (c) 2026 4nime1234r. Todos los derechos reservados.

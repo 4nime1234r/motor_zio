@@ -1,5 +1,7 @@
 #include "update/Updater.h"
 
+#include "update/ReleaseNotes.h"
+
 #include <windows.h>
 #include <winhttp.h>
 #include <bcrypt.h>
@@ -26,6 +28,9 @@ namespace
 {
 
 constexpr const wchar_t* kHost          = L"github.com";
+constexpr const wchar_t* kApiHost       = L"api.github.com";
+constexpr const wchar_t* kNotesPrefix   = L"/repos/4nime1234r/motor_zio/releases/tags/v";
+constexpr std::uint64_t kMaxNotesBytes  = 512 * 1024;
 constexpr const wchar_t* kLatestPath    = L"/4nime1234r/motor_zio/releases/latest/download/latest.yml";
 constexpr const wchar_t* kReleasePrefix = L"/4nime1234r/motor_zio/releases/download/v";
 constexpr const wchar_t* kAssetName     = L"/zio_editor.exe";
@@ -117,7 +122,7 @@ struct InternetHandle
 
 using Sink = std::function<bool(const char*, std::size_t)>;
 
-bool httpGet(const std::wstring& path, std::uint64_t maxBytes, const Sink& sink,
+bool httpGet(const wchar_t* host, const std::wstring& path, std::uint64_t maxBytes, const Sink& sink,
              const std::function<void(std::uint64_t, std::uint64_t)>& progress, const std::atomic<bool>& cancel,
              std::string& error)
 {
@@ -131,7 +136,7 @@ bool httpGet(const std::wstring& path, std::uint64_t maxBytes, const Sink& sink,
     }
     WinHttpSetTimeouts(session.handle, 10000, 10000, 15000, 30000);
 
-    InternetHandle connection(WinHttpConnect(session.handle, kHost, INTERNET_DEFAULT_HTTPS_PORT, 0));
+    InternetHandle connection(WinHttpConnect(session.handle, host, INTERNET_DEFAULT_HTTPS_PORT, 0));
     if (!connection.handle)
     {
         error = "No se pudo conectar con GitHub";
@@ -382,12 +387,30 @@ void Updater::retry()
     wake_.notify_all();
 }
 
+bool Updater::checkNow()
+{
+    if (!enabled() || !worker_.joinable())
+        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (status_.state != UpdateState::Idle && status_.state != UpdateState::Error)
+            return false;
+        status_.state    = UpdateState::Checking;
+        status_.error.clear();
+        status_.upToDate = false;
+        recheckRequested_ = true;
+    }
+    wake_.notify_all();
+    return true;
+}
+
 void Updater::run()
 {
     {
         std::unique_lock<std::mutex> lock(mutex_);
-        if (wake_.wait_for(lock, kStartupDelay, [this] { return stop_; }))
+        if (wake_.wait_for(lock, kStartupDelay, [this] { return stop_ || recheckRequested_; }) && stop_)
             return;
+        recheckRequested_ = false;
     }
     check();
 
@@ -426,7 +449,7 @@ void Updater::check()
     std::string manifest;
     std::string error;
     const bool ok = httpGet(
-        kLatestPath, kMaxManifestBytes,
+        kHost, kLatestPath, kMaxManifestBytes,
         [&manifest](const char* data, std::size_t size) {
             manifest.append(data, size);
             return true;
@@ -451,17 +474,43 @@ void Updater::check()
 
     if (!(current < latest))
     {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            status_.checked  = true;
+            status_.upToDate = true;
+            status_.notes.clear();
+        }
         setState(UpdateState::Idle);
         return;
     }
 
+    loadNotes(remote);
+
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        status_.checked  = true;
+        status_.upToDate = false;
         status_.version = remote;
         status_.state   = UpdateState::Available;
         status_.error.clear();
         expectedHash_ = hash;
     }
+}
+
+void Updater::loadNotes(const std::string& version)
+{
+    std::string body;
+    std::string error;
+    const bool ok = httpGet(
+        kApiHost, std::wstring(kNotesPrefix) + widen(version), kMaxNotesBytes,
+        [&body](const char* data, std::size_t size) {
+            body.append(data, size);
+            return true;
+        },
+        nullptr, cancel_, error);
+    std::string notes = ok ? releaseBodyFromJson(body) : std::string();
+    std::lock_guard<std::mutex> lock(mutex_);
+    status_.notes = std::move(notes);
 }
 
 void Updater::fetch()
@@ -497,7 +546,7 @@ void Updater::fetch()
     const std::wstring path = std::wstring(kReleasePrefix) + widen(version) + kAssetName;
     std::string error;
     const bool ok = httpGet(
-        path, kMaxBinaryBytes,
+        kHost, path, kMaxBinaryBytes,
         [&](const char* data, std::size_t size) {
             hash.update(data, size);
             out.write(data, static_cast<std::streamsize>(size));
