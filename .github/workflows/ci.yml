@@ -49,3 +49,21 @@ jobs:
 
       - name: Pruebas
         run: ctest --test-dir build --output-on-failure
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar dependencias
+        run: brew install ninja vulkan-headers vulkan-loader shaderc
+
+      - name: Configurar
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DZIO_BUILD_TESTS=ON
+
+      - name: Compilar
+        run: cmake --build build --parallel
+
+      - name: Pruebas
+        run: ctest --test-dir build --output-on-failure
