@@ -15,6 +15,7 @@ Es un proyecto en desarrollo activo. La versión actual es la **0.2.0**.
 - Escenas guardadas y cargadas desde archivos JSON.
 
 **Gráficos 3D**
+- Animación de sprites con hojas de cuadros, animaciones con nombre (bucle, velocidad) guardadas en la escena.
 - Carga de modelos `.obj`, `.gltf` y `.glb` (posiciones, normales, coordenadas de textura, transformaciones de nodos, color base y textura base externa del material).
 - Escenas con jerarquía de nodos y cámara.
 - Iluminación por píxel y sombras reales con mapa de sombras suavizado.
@@ -118,7 +119,7 @@ La carpeta `projects/` contiene ejemplos completos, entre ellos `Prueba3D`, una 
 
 ## Limitaciones actuales
 
-- No hay animación de huesos ni de sprites.
+- No hay animación de huesos.
 - De los modelos glTF solo se usa el primer material (color base y textura externa); no hay PBR completo, huesos ni texturas incrustadas.
 - No hay scripting: el juego se escribe en C++.
 - Solo funciona en Windows.

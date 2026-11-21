@@ -4,6 +4,7 @@ set(ZIO_TESTS
     DockTest
     WidgetsTest
     GltfTest
+    SpriteAnimationTest
 )
 
 foreach(testName IN LISTS ZIO_TESTS)

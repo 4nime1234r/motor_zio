@@ -108,6 +108,54 @@ void writeNode(std::string& out, const Node& node, int level)
         indent(out, in);
         out += "\"color\": ";
         writeColor(out, sprite->color());
+        if (sprite->sheetColumns() > 1 || sprite->sheetRows() > 1)
+        {
+            out += ",\n";
+            indent(out, in);
+            out += "\"sheet\": [";
+            writeNumber(out, sprite->sheetColumns());
+            out += ", ";
+            writeNumber(out, sprite->sheetRows());
+            out += ']';
+        }
+        if (sprite->frame() != 0)
+        {
+            out += ",\n";
+            indent(out, in);
+            out += "\"frame\": ";
+            writeNumber(out, sprite->frame());
+        }
+        if (!sprite->animations().empty())
+        {
+            out += ",\n";
+            indent(out, in);
+            out += "\"animations\": [";
+            bool firstAnim = true;
+            for (const SpriteAnimation& a : sprite->animations())
+            {
+                out += firstAnim ? "" : ", ";
+                firstAnim = false;
+                out += "{\"name\": ";
+                writeString(out, a.name);
+                out += ", \"first\": ";
+                writeNumber(out, a.firstFrame);
+                out += ", \"last\": ";
+                writeNumber(out, a.lastFrame);
+                out += ", \"fps\": ";
+                writeNumber(out, a.fps);
+                out += ", \"loop\": ";
+                out += a.loop ? "true" : "false";
+                out += '}';
+            }
+            out += ']';
+        }
+        if (sprite->isPlaying())
+        {
+            out += ",\n";
+            indent(out, in);
+            out += "\"animation\": ";
+            writeString(out, sprite->currentAnimation());
+        }
     }
     else if (const auto* label = dynamic_cast<const Label*>(&node))
     {
@@ -269,6 +317,46 @@ struct Reader : json::Fields
             if (!color(o, path, c, has))
                 return nullptr;
             sprite->setColor(c);
+            double sheet[2] = {};
+            if (!getNumbers(o, "sheet", path, 2, sheet, has))
+                return nullptr;
+            if (has)
+                sprite->setSheet(static_cast<int>(sheet[0]), static_cast<int>(sheet[1]));
+            double frameNumber = 0;
+            if (!getNumber(o, "frame", path, frameNumber, has))
+                return nullptr;
+            if (has)
+                sprite->setFrame(static_cast<int>(frameNumber));
+            if (const Value* list = o.find("animations"))
+            {
+                const auto* arr = std::get_if<Array>(&list->v);
+                if (!arr)
+                    return fail(path, "\"animations\" must be an array"), nullptr;
+                for (std::size_t i = 0; i < arr->size(); ++i)
+                {
+                    const std::string apath = path + "/animations[" + std::to_string(i) + "]";
+                    const Value& a          = (*arr)[i];
+                    if (!std::holds_alternative<Object>(a.v))
+                        return fail(apath, "an animation must be an object"), nullptr;
+                    SpriteAnimation anim;
+                    double first = 0, last = 0, fps = 10;
+                    bool loop = true;
+                    if (!getString(a, "name", apath, anim.name, has) || !getNumber(a, "first", apath, first, has) ||
+                        !getNumber(a, "last", apath, last, has) || !getNumber(a, "fps", apath, fps, has) ||
+                        !getBool(a, "loop", apath, loop, has))
+                        return nullptr;
+                    anim.firstFrame = static_cast<int>(first);
+                    anim.lastFrame  = static_cast<int>(last);
+                    anim.fps        = static_cast<float>(fps);
+                    anim.loop       = loop;
+                    sprite->addAnimation(std::move(anim));
+                }
+            }
+            std::string playName;
+            if (!getString(o, "animation", path, playName, has))
+                return nullptr;
+            if (has && !playName.empty())
+                sprite->play(playName);
             out = std::move(sprite);
         }
         else if (type == "Label")
