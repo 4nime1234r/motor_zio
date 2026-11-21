@@ -26,6 +26,7 @@ Es un proyecto en desarrollo activo. La versión actual es la **0.2.0**.
 - Física 3D con cuerpos rígidos (estáticos, dinámicos y cinemáticos), esferas y cajas orientadas, rotación con inercia, fricción, rebote, impulsos y fuerzas, y rayos.
 - Audio con clips, volumen y tono, por sonido o por categoría.
 - Entrada de teclado, ratón y mando.
+- Librería de interfaz propia (`zio::ui`): widgets en árbol con contenedores de diseño (cajas, paneles, desplazamiento, divisores y pestañas), botones, casillas, campos de texto con selección y portapapeles, tema con la paleta de Zio y fuentes del sistema. Funciona en juegos y es la base del futuro editor.
 - Sistema de tareas en segundo plano con aviso al hilo principal.
 - Pila de escenas, bus de eventos, preferencias en disco y matemáticas (vectores, matrices y cuaterniones).
 
@@ -113,7 +114,7 @@ add_executable(MiJuego main.cpp)
 target_link_libraries(MiJuego PRIVATE zio::engine)
 ```
 
-La carpeta `projects/` contiene ejemplos completos, entre ellos `Prueba3D`, una escena 3D con sombras y transparencias.
+La carpeta `projects/` contiene ejemplos completos, entre ellos `Prueba3D`, una escena 3D con sombras y transparencias, y `PruebaUI`, una pantalla con la librería de interfaz propia.
 
 ## Limitaciones actuales
 

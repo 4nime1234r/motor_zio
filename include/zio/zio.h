@@ -39,3 +39,4 @@
 #include "zio/scene3d/Renderer3D.h"
 #include "zio/scene3d/Scene3D.h"
 #include "zio/scene3d/SceneIO3D.h"
+#include "zio/ui/UI.h"

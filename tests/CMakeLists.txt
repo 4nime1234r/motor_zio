@@ -1,5 +1,6 @@
 set(ZIO_TESTS
     Physics3DTest
+    UITest
 )
 
 foreach(testName IN LISTS ZIO_TESTS)

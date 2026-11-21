@@ -9,6 +9,15 @@
 namespace zio::platform
 {
 
+enum class CursorShape
+{
+    Arrow,
+    IBeam,
+    ResizeHorizontal,
+    ResizeVertical,
+    Hand
+};
+
 class ZIO_API Window
 {
 public:
@@ -31,6 +40,8 @@ public:
     bool isMinimized() const;
 
     bool consumeResize(std::uint32_t& outWidth, std::uint32_t& outHeight);
+
+    void setCursor(CursorShape shape);
 
     void* nativeHandle() const;
 

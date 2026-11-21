@@ -131,6 +131,26 @@ struct Window::Impl
     bool haveLastMouse      = false;
 
     bool minimized = false;
+    CursorShape cursorShape = CursorShape::Arrow;
+    char32_t pendingHighSurrogate = 0;
+
+    static HCURSOR cursorHandle(CursorShape shape)
+    {
+        switch (shape)
+        {
+        case CursorShape::IBeam:
+            return LoadCursorW(nullptr, IDC_IBEAM);
+        case CursorShape::ResizeHorizontal:
+            return LoadCursorW(nullptr, IDC_SIZEWE);
+        case CursorShape::ResizeVertical:
+            return LoadCursorW(nullptr, IDC_SIZENS);
+        case CursorShape::Hand:
+            return LoadCursorW(nullptr, IDC_HAND);
+        case CursorShape::Arrow:
+            break;
+        }
+        return LoadCursorW(nullptr, IDC_ARROW);
+    }
 
     std::uint32_t notifiedWidth  = 0;
     std::uint32_t notifiedHeight = 0;
@@ -174,6 +194,34 @@ struct Window::Impl
         case WM_CLOSE:
             closeRequested = true;
             return 0;
+
+        case WM_SETCURSOR:
+            if (LOWORD(lParam) == HTCLIENT)
+            {
+                SetCursor(cursorHandle(cursorShape));
+                return TRUE;
+            }
+            break;
+
+        case WM_CHAR:
+        {
+            char32_t codepoint = static_cast<char32_t>(wParam);
+            if (codepoint >= 0xD800 && codepoint <= 0xDBFF)
+            {
+                pendingHighSurrogate = codepoint;
+                return 0;
+            }
+            if (codepoint >= 0xDC00 && codepoint <= 0xDFFF)
+            {
+                if (!pendingHighSurrogate)
+                    return 0;
+                codepoint = 0x10000 + ((pendingHighSurrogate - 0xD800) << 10) + (codepoint - 0xDC00);
+                pendingHighSurrogate = 0;
+            }
+            if (codepoint >= 32 && codepoint != 127)
+                bus.postText(codepoint);
+            return 0;
+        }
 
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN:
@@ -432,6 +480,21 @@ bool Window::consumeResize(std::uint32_t& outWidth, std::uint32_t& outHeight)
     return true;
 }
 
+void Window::setCursor(CursorShape shape)
+{
+    if (impl_->cursorShape == shape)
+        return;
+    impl_->cursorShape = shape;
+    if (impl_->hwnd)
+    {
+        POINT cursor{};
+        RECT client{};
+        if (GetCursorPos(&cursor) && GetClientRect(impl_->hwnd, &client) && ScreenToClient(impl_->hwnd, &cursor) &&
+            PtInRect(&client, cursor))
+            SetCursor(Impl::cursorHandle(shape));
+    }
+}
+
 void* Window::nativeHandle() const
 {
     return impl_->hwnd;
@@ -494,6 +557,10 @@ bool Window::isMinimized() const
 bool Window::consumeResize(std::uint32_t&, std::uint32_t&)
 {
     return false;
+}
+
+void Window::setCursor(CursorShape)
+{
 }
 
 void* Window::nativeHandle() const

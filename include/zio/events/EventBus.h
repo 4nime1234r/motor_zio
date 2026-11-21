@@ -30,12 +30,14 @@ public:
     using MouseMoveCallback   = std::function<void(const MouseMoveEvent&)>;
     using MouseScrollCallback = std::function<void(const MouseScrollEvent&)>;
     using TouchCallback       = std::function<void(const TouchEvent&)>;
+    using TextCallback        = std::function<void(const TextEvent&)>;
 
     ListenerId onKey(KeyCallback callback);
     ListenerId onMouseButton(MouseButtonCallback callback);
     ListenerId onMouseMove(MouseMoveCallback callback);
     ListenerId onMouseScroll(MouseScrollCallback callback);
     ListenerId onTouch(TouchCallback callback);
+    ListenerId onText(TextCallback callback);
 
     void unsubscribe(ListenerId id);
 
@@ -44,6 +46,7 @@ public:
     void postMouseMove(float x, float y, float dx, float dy);
     void postMouseScroll(float x, float y, float scrollX, float scrollY);
     void postTouch(TouchPhase phase, const TouchPoint* points, std::size_t count);
+    void postText(char32_t codepoint);
 
     void dispatchPending();
 
@@ -77,6 +80,7 @@ private:
     ListenerList<MouseMoveCallback> mouseMoveListeners_;
     ListenerList<MouseScrollCallback> mouseScrollListeners_;
     ListenerList<TouchCallback> touchListeners_;
+    ListenerList<TextCallback> textListeners_;
 
     std::mutex queueMutex_;
     std::vector<KeyEvent> pendingKeys_;
@@ -84,12 +88,14 @@ private:
     std::vector<MouseMoveEvent> pendingMouseMoves_;
     std::vector<MouseScrollEvent> pendingMouseScrolls_;
     std::vector<TouchEvent> pendingTouches_;
+    std::vector<TextEvent> pendingTexts_;
 
     std::vector<KeyEvent> drainKeys_;
     std::vector<MouseButtonEvent> drainMouseButtons_;
     std::vector<MouseMoveEvent> drainMouseMoves_;
     std::vector<MouseScrollEvent> drainMouseScrolls_;
     std::vector<TouchEvent> drainTouches_;
+    std::vector<TextEvent> drainTexts_;
 
     bool dispatching_ = false;
 };

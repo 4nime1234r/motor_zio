@@ -60,6 +60,7 @@ void applyZioTheme()
     style.GrabRounding           = 5.f;
     style.TabRounding            = 6.f;
     style.WindowTitleAlign       = ImVec2(0.f, 0.5f);
+    style.WindowMenuButtonPosition = ImGuiDir_None;
     style.SeparatorTextBorderSize = 1.f;
 
     const ImVec4 deepest    = hex(0x090a0f);

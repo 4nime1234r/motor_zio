@@ -58,6 +58,13 @@ add_library(engine STATIC
     src/scene3d/Scene3D.cpp
     src/scene3d/SceneIO3D.cpp
     src/scene2d/Sprite.cpp
+    src/ui/BatchPainter.cpp
+    src/ui/Containers.cpp
+    src/ui/Controls.cpp
+    src/ui/Core.cpp
+    src/ui/EngineHost.cpp
+    src/ui/GdiFont.cpp
+    src/ui/Text.cpp
 )
 add_library(zio::engine ALIAS engine)
 set_target_properties(engine PROPERTIES OUTPUT_NAME zio_engine)
@@ -75,7 +82,7 @@ target_link_libraries(engine PUBLIC Threads::Threads)
 target_link_libraries(engine PUBLIC Vulkan::Vulkan)
 if(WIN32)
     target_link_libraries(engine PUBLIC
-        user32 ole32 gdiplus xinput xaudio2 mfplat mfreadwrite)
+        user32 gdi32 ole32 gdiplus xinput xaudio2 mfplat mfreadwrite)
 endif()
 
 zio_add_spirv_shader(engine

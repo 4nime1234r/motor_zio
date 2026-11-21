@@ -18,12 +18,14 @@ EventBus::EventBus()
     pendingMouseMoves_.reserve(kInitialQueueCapacity);
     pendingMouseScrolls_.reserve(kInitialQueueCapacity);
     pendingTouches_.reserve(kInitialQueueCapacity);
+    pendingTexts_.reserve(kInitialQueueCapacity);
 
     drainKeys_.reserve(kInitialQueueCapacity);
     drainMouseButtons_.reserve(kInitialQueueCapacity);
     drainMouseMoves_.reserve(kInitialQueueCapacity);
     drainMouseScrolls_.reserve(kInitialQueueCapacity);
     drainTouches_.reserve(kInitialQueueCapacity);
+    drainTexts_.reserve(kInitialQueueCapacity);
 }
 
 EventBus::~EventBus() = default;
@@ -113,6 +115,13 @@ ListenerId EventBus::onTouch(TouchCallback callback)
     return id;
 }
 
+ListenerId EventBus::onText(TextCallback callback)
+{
+    ListenerId id = allocateId();
+    textListeners_.push_back(Listener<TextCallback>{id, std::move(callback)});
+    return id;
+}
+
 void EventBus::unsubscribe(ListenerId id)
 {
     if (id == kInvalidListenerId)
@@ -126,7 +135,9 @@ void EventBus::unsubscribe(ListenerId id)
         return;
     if (markRemoved(mouseScrollListeners_, id))
         return;
-    markRemoved(touchListeners_, id);
+    if (markRemoved(touchListeners_, id))
+        return;
+    markRemoved(textListeners_, id);
 }
 
 void EventBus::postKey(KeyCode code, bool down, bool repeat)
@@ -151,6 +162,12 @@ void EventBus::postMouseScroll(float x, float y, float scrollX, float scrollY)
 {
     std::lock_guard<std::mutex> lock(queueMutex_);
     pendingMouseScrolls_.push_back(MouseScrollEvent{x, y, scrollX, scrollY});
+}
+
+void EventBus::postText(char32_t codepoint)
+{
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    pendingTexts_.push_back(TextEvent{codepoint});
 }
 
 void EventBus::postTouch(TouchPhase phase, const TouchPoint* points, std::size_t count)
@@ -183,6 +200,7 @@ void EventBus::dispatchPending()
         std::swap(pendingMouseMoves_, drainMouseMoves_);
         std::swap(pendingMouseScrolls_, drainMouseScrolls_);
         std::swap(pendingTouches_, drainTouches_);
+        std::swap(pendingTexts_, drainTexts_);
     }
 
     dispatchList(drainKeys_, keyListeners_);
@@ -200,6 +218,10 @@ void EventBus::dispatchPending()
     dispatchList(drainMouseScrolls_, mouseScrollListeners_);
     drainMouseScrolls_.clear();
     compact(mouseScrollListeners_);
+
+    dispatchList(drainTexts_, textListeners_);
+    drainTexts_.clear();
+    compact(textListeners_);
 
     dispatchList(drainTouches_, touchListeners_);
     drainTouches_.clear();

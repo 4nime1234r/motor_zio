@@ -108,6 +108,11 @@ struct MouseScrollEvent
     float scrollX, scrollY;
 };
 
+struct TextEvent
+{
+    char32_t codepoint = 0;
+};
+
 struct TouchEvent
 {
     TouchPhase phase;
