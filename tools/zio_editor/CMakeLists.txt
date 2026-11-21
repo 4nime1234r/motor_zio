@@ -19,6 +19,7 @@ set(IMGUI_DIR "${ZIO_ROOT}/third_party/imgui")
 set(IMGUI_RENDERER_BACKEND ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp)
 
 enable_language(RC)
+set_source_files_properties(zio_editor.rc PROPERTIES OBJECT_DEPENDS "${ZIO_ROOT}/assets/icon/zio.ico")
 
 add_executable(zio_editor
     zio_editor.rc
