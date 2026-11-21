@@ -103,7 +103,7 @@ void Button::draw(Painter& painter)
         painter.fillRoundRect(rect(), fill, t.radius);
 
     Font& f       = font();
-    const float x = rect().x + (rect().w - f.textWidth(text_)) * 0.5f;
+    const float x = alignLeft_ ? rect().x + 8.f : rect().x + (rect().w - f.textWidth(text_)) * 0.5f;
     const float y = rect().y + (rect().h - f.lineHeight()) * 0.5f;
     painter.text(f, {std::floor(x), std::floor(y)}, text_, enabled ? t.text : dimmed(t.text));
 }

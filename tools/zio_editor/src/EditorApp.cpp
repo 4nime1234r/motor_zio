@@ -33,13 +33,13 @@ fs::path layoutSettingsPath()
     const char* appData = std::getenv("APPDATA");
     if (!appData || !*appData)
         return {};
-    return fs::path(appData) / "ZioEditor" / "disposicion_ui_v2.txt";
+    return fs::path(appData) / "ZioEditor" / "disposicion_ui_v3.txt";
 }
 
 }
 
 EditorApp::EditorApp()
-    : viewport_(context_), hierarchy_(*this), inspector_(*this), files_(*this), performance_(*this)
+    : viewport_(context_), hierarchy_(*this), inspector_(*this), files_(*this), output_(*this), performance_(*this)
 {
 }
 
@@ -91,6 +91,7 @@ bool EditorApp::onInit()
         updater_.start();
     }
 
+    log(std::string("Editor de Zio v") + ZIO_VERSION);
     openInitialProject();
     lastTick_ = std::chrono::steady_clock::now();
     return true;
@@ -357,17 +358,19 @@ std::vector<MenuItem> EditorApp::sideItems(const std::string& id)
 std::vector<MenuItem> EditorApp::viewItems()
 {
     std::vector<MenuItem> panels;
-    panels.push_back(MenuItem::submenuItem("Jerarquía", sideItems("jerarquia")));
-    panels.push_back(MenuItem::submenuItem("Archivos", sideItems("archivos")));
+    panels.push_back(MenuItem::submenuItem("Escena", sideItems("jerarquia")));
+    panels.push_back(MenuItem::submenuItem("Sistema de archivos", sideItems("archivos")));
     panels.push_back(MenuItem::submenuItem("Inspector", sideItems("inspector")));
+    panels.push_back(MenuItem::submenuItem("Salida", sideItems("salida")));
     panels.push_back(MenuItem::submenuItem("Rendimiento", sideItems("rendimiento")));
     return {MenuItem::submenuItem("Posición de los paneles", std::move(panels)), MenuItem::line(),
             MenuItem::item("Restablecer disposición", [this]() {
                 dock_->movePanel("jerarquia", zio::ui::DockSide::Left);
-                dock_->movePanel("archivos", zio::ui::DockSide::Bottom);
+                dock_->movePanel("archivos", zio::ui::DockSide::Left);
                 dock_->movePanel("inspector", zio::ui::DockSide::Right);
+                dock_->movePanel("salida", zio::ui::DockSide::Bottom);
                 dock_->movePanel("rendimiento", zio::ui::DockSide::Bottom);
-                dock_->setFractions(0.24f, 0.26f, 0.32f);
+                dock_->setFractions(0.2f, 0.24f, 0.26f);
                 saveLayout();
             })};
 }
@@ -387,6 +390,13 @@ void EditorApp::buildTopBar(zio::ui::Widget* page)
     menu->addMenu("Ver", [this]() { return viewItems(); });
 
     row->add<zio::ui::Widget>()->setExpand(true, false);
+    auto* mode = row->add<zio::ui::Button>(std::string("3D"));
+    mode->setFlat(true);
+    mode->setPrimary(true);
+    mode->setToggle(true);
+    mode->setToggled(true);
+    mode->setOnToggled([mode](bool) { mode->setToggled(true); });
+    row->add<zio::ui::Widget>()->setExpand(true, false);
     play_ = row->add<ToolButton>(ToolIcon::Play, 28.f);
     play_->setTooltip("Jugar (F5)");
     play_->setOnClick([this]() {
@@ -399,7 +409,6 @@ void EditorApp::buildTopBar(zio::ui::Widget* page)
         if (context_.playing())
             togglePlay();
     });
-    row->add<zio::ui::Widget>()->setExpand(true, false);
 }
 
 void EditorApp::buildStatusBar(zio::ui::Widget* page)
@@ -437,12 +446,22 @@ void EditorApp::buildUi()
 
     dock_ = page->add<zio::ui::DockSpace>();
     dock_->setExpand(true, true);
-    dock_->setCenter(viewport_.build());
-    dock_->addPanel("jerarquia", "Jerarquía", hierarchy_.build(), zio::ui::DockSide::Left);
-    dock_->addPanel("archivos", "Archivos", files_.build(), zio::ui::DockSide::Bottom);
+    auto center = std::make_unique<zio::ui::VBox>();
+    center->setSeparation(0.f);
+    auto* tabBar = center->add<zio::ui::Panel>();
+    tabBar->setBackground(ui_->theme().deep);
+    tabBar->setPadding(zio::ui::Edges::symmetric(12.f, 5.f));
+    sceneTab_ = tabBar->add<zio::ui::Label>(std::string("[sin guardar]"));
+    sceneTab_->setBold(true);
+    auto* viewportWidget = center->addChild(viewport_.build());
+    viewportWidget->setExpand(true, true);
+    dock_->setCenter(std::move(center));
+    dock_->addPanel("jerarquia", "Escena", hierarchy_.build(), zio::ui::DockSide::Left);
+    dock_->addPanel("archivos", "Sistema de archivos", files_.build(), zio::ui::DockSide::Left);
     dock_->addPanel("inspector", "Inspector", inspector_.build(), zio::ui::DockSide::Right);
+    dock_->addPanel("salida", "Salida", output_.build(), zio::ui::DockSide::Bottom);
     dock_->addPanel("rendimiento", "Rendimiento", performance_.build(), zio::ui::DockSide::Bottom);
-    dock_->setFractions(0.24f, 0.26f, 0.32f);
+    dock_->setFractions(0.2f, 0.24f, 0.26f);
 
     buildStatusBar(page);
 }
@@ -506,6 +525,31 @@ void EditorApp::refreshStatus()
     }
     statusScene_->setText(text);
 
+    {
+        const std::string sceneName = context_.project().isOpen() ? context_.currentScene() : std::string();
+        sceneTab_->setText((sceneName.empty() ? std::string("[sin guardar]") : sceneName) +
+                           (context_.isDirty() ? " (*)" : ""));
+        const std::string projectName = context_.project().isOpen() ? context_.project().name() : std::string();
+        if (projectName != loggedProject_)
+        {
+            loggedProject_ = projectName;
+            if (!projectName.empty())
+                log("Proyecto abierto: " + projectName);
+        }
+        if (sceneName != loggedScene_)
+        {
+            loggedScene_ = sceneName;
+            if (!sceneName.empty())
+                log("Escena: " + sceneName);
+        }
+        if (context_.lastError() != loggedError_)
+        {
+            loggedError_ = context_.lastError();
+            if (!loggedError_.empty())
+                log(loggedError_, true);
+        }
+    }
+
     const std::string& error = context_.lastError().empty() ? statusErrorText_ : context_.lastError();
     statusError_->setText(error);
 
@@ -542,6 +586,7 @@ void EditorApp::onBeforeTick(float dt)
     inspector_.refresh();
     files_.refresh(realDt_);
     performance_.refresh(realDt_);
+    output_.refresh();
     refreshStatus();
 
     if (!context_.playing())

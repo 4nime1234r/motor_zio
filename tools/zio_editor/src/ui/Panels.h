@@ -26,6 +26,7 @@ public:
     virtual std::vector<zio::ui::MenuItem> editItems()                                 = 0;
     virtual void showPopup(std::vector<zio::ui::MenuItem> items, zio::ui::Vec2 position) = 0;
     virtual float frameMs() const                                                      = 0;
+    virtual void log(const std::string& text, bool error = false)                      = 0;
 };
 
 class HierarchyPanel
@@ -39,11 +40,16 @@ public:
 private:
     void rebuild();
     void addChildren(zio::ui::TreeItem* parent, zio::scene3d::Node3D& node, const std::unordered_map<const void*, bool>& expanded);
+    bool matchesFilter(const zio::scene3d::Node3D& node) const;
     void pushSelection();
     void markSelected(zio::ui::TreeItem* item);
 
     EditorServices& services_;
     zio::ui::TreeView* tree_ = nullptr;
+    zio::ui::LineEdit* filter_ = nullptr;
+    zio::ui::Button* add_      = nullptr;
+    std::string filterText_;
+    std::string lastFilter_;
     std::uint64_t lastStamp_    = static_cast<std::uint64_t>(-1);
     std::uint64_t lastRevision_ = static_cast<std::uint64_t>(-1);
     std::vector<zio::scene3d::Node3D*> lastSelection_;
@@ -118,6 +124,11 @@ private:
     zio::ui::Button* edit_       = nullptr;
     zio::ui::Button* remove_     = nullptr;
     zio::ui::IconGrid* grid_     = nullptr;
+    void applyFilter();
+
+    zio::ui::LineEdit* filter_ = nullptr;
+    std::string filterText_;
+    std::vector<AssetEntry> allEntries_;
     std::vector<AssetEntry> entries_;
     std::string signature_;
     std::string statusText_;
@@ -125,6 +136,22 @@ private:
     float timer_      = 10.f;
     bool scanning_    = false;
     bool rescan_      = false;
+};
+
+class OutputPanel
+{
+public:
+    explicit OutputPanel(EditorServices& services) : services_(services) {}
+
+    std::unique_ptr<zio::ui::Widget> build();
+    void add(const std::string& text, bool error);
+    void refresh();
+
+private:
+    EditorServices& services_;
+    zio::ui::ScrollContainer* scroll_ = nullptr;
+    zio::ui::VBox* lines_             = nullptr;
+    bool scrollPending_               = false;
 };
 
 class PerformancePanel

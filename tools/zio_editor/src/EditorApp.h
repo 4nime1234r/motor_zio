@@ -32,6 +32,7 @@ public:
     std::vector<zio::ui::MenuItem> editItems() override;
     void showPopup(std::vector<zio::ui::MenuItem> items, zio::ui::Vec2 position) override;
     float frameMs() const override { return frameMs_; }
+    void log(const std::string& text, bool error = false) override { output_.add(text, error); }
 
 protected:
     bool onInit() override;
@@ -74,12 +75,17 @@ private:
     HierarchyPanel hierarchy_;
     InspectorPanel inspector_;
     FilesPanel files_;
+    OutputPanel output_;
     PerformancePanel performance_;
 
     zio::ui::DockSpace* dock_       = nullptr;
     ToolButton* play_               = nullptr;
     ToolButton* stop_               = nullptr;
     zio::ui::Label* statusScene_    = nullptr;
+    zio::ui::Label* sceneTab_       = nullptr;
+    std::string loggedProject_;
+    std::string loggedScene_;
+    std::string loggedError_;
     zio::ui::Label* statusError_    = nullptr;
     zio::ui::Label* statusRight_    = nullptr;
     zio::ui::Label* updateText_     = nullptr;

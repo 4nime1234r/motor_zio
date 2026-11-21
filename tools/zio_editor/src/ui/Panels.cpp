@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <ctime>
 #include <set>
 #include <system_error>
 #include <shellapi.h>
@@ -106,6 +107,22 @@ zio::ui::IconItem iconFor(const AssetEntry& entry)
     return item;
 }
 
+zio::ui::VBox* addFoldout(zio::ui::Widget* parent, const std::string& title, bool open)
+{
+    auto* box    = parent->add<zio::ui::VBox>();
+    auto* header = box->add<zio::ui::Button>(std::string(open ? "\u25BE  " : "\u25B8  ") + title);
+    header->setFlat(true);
+    header->setAlignLeft(true);
+    auto* body = box->add<zio::ui::VBox>();
+    body->setVisible(open);
+    header->setOnClick([header, body, title]() {
+        const bool show = !body->visible();
+        body->setVisible(show);
+        header->setText(std::string(show ? "\u25BE  " : "\u25B8  ") + title);
+    });
+    return body;
+}
+
 void setComponent(zio::math::Vec3& v, int axis, float value)
 {
     if (axis == 0)
@@ -120,8 +137,28 @@ void setComponent(zio::math::Vec3& v, int axis, float value)
 
 std::unique_ptr<zio::ui::Widget> HierarchyPanel::build()
 {
-    auto scroll = std::make_unique<zio::ui::ScrollContainer>(true, false);
-    tree_       = scroll->add<zio::ui::TreeView>();
+    auto column = std::make_unique<zio::ui::VBox>();
+    column->setPadding(Edges::all(6.f));
+    auto* top = column->add<zio::ui::HBox>();
+    add_      = top->add<zio::ui::Button>(std::string("+"));
+    add_->setTooltip("Añadir objeto");
+    add_->setOnClick([this]() {
+        const zio::ui::Rect r = add_->rect();
+        services_.showPopup(services_.addObjectItems(), {r.x, r.bottom()});
+    });
+    filter_ = top->add<zio::ui::LineEdit>();
+    filter_->setPlaceholder("Filtrar nodos");
+    filter_->setExpand(true, false);
+    filter_->setOnChanged([this](const std::string& text) {
+        std::string lowered = text;
+        for (char& c : lowered)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        filterText_ = lowered;
+    });
+
+    auto* scroll = column->add<zio::ui::ScrollContainer>(true, false);
+    scroll->setExpand(true, true);
+    tree_ = scroll->add<zio::ui::TreeView>();
 
     tree_->setOnSelectionChanged([this]() {
         if (syncing_)
@@ -144,7 +181,22 @@ std::unique_ptr<zio::ui::Widget> HierarchyPanel::build()
         items.push_back(std::move(remove));
         services_.showPopup(std::move(items), position);
     });
-    return scroll;
+    return column;
+}
+
+bool HierarchyPanel::matchesFilter(const zio::scene3d::Node3D& node) const
+{
+    if (filterText_.empty())
+        return true;
+    std::string name = node.name();
+    for (char& c : name)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (name.find(filterText_) != std::string::npos)
+        return true;
+    for (const auto& child : node.children())
+        if (matchesFilter(*child))
+            return true;
+    return false;
 }
 
 void HierarchyPanel::addChildren(TreeItem* parent, zio::scene3d::Node3D& node,
@@ -152,12 +204,14 @@ void HierarchyPanel::addChildren(TreeItem* parent, zio::scene3d::Node3D& node,
 {
     for (const auto& child : node.children())
     {
+        if (!matchesFilter(*child))
+            continue;
         const bool isMesh = dynamic_cast<const zio::scene3d::MeshNode*>(child.get()) != nullptr;
         TreeItem* item    = parent->add(child->name().empty() ? "(sin nombre)" : child->name());
         item->userData    = child.get();
         item->iconColor   = isMesh ? kMeshColor : kNodeColor;
         const auto it     = expanded.find(child.get());
-        item->expanded    = it == expanded.end() ? true : it->second;
+        item->expanded    = filterText_.empty() ? (it == expanded.end() ? true : it->second) : true;
         addChildren(item, *child, expanded);
     }
 }
@@ -210,8 +264,9 @@ void HierarchyPanel::rebuild()
 void HierarchyPanel::refresh()
 {
     auto& ctx = services_.context();
-    if (ctx.changeStamp() != lastStamp_ || ctx.sceneRevision() != lastRevision_)
+    if (ctx.changeStamp() != lastStamp_ || ctx.sceneRevision() != lastRevision_ || filterText_ != lastFilter_)
     {
+        lastFilter_   = filterText_;
         lastStamp_    = ctx.changeStamp();
         lastRevision_ = ctx.sceneRevision();
         rebuild();
@@ -297,14 +352,15 @@ std::unique_ptr<zio::ui::Widget> InspectorPanel::build()
         };
     };
 
-    addVector(fields_, "Posición", pos_, 0.05, makeCallback(pos_, 0));
-    addVector(fields_, "Rotación (°)", rot_, 1.0, makeCallback(rot_, 1));
-    addVector(fields_, "Escala", scale_, 0.05, makeCallback(scale_, 2));
+    auto* transform = addFoldout(fields_, "Transform", true);
+    addVector(transform, "Posición", pos_, 0.05, makeCallback(pos_, 0));
+    addVector(transform, "Rotación (°)", rot_, 1.0, makeCallback(rot_, 1));
+    addVector(transform, "Escala", scale_, 0.05, makeCallback(scale_, 2));
 
-    meshBox_ = fields_->add<zio::ui::VBox>();
-    meshBox_->add<zio::ui::Separator>();
-    meshBox_->add<zio::ui::Label>(std::string("Color"));
-    color_ = meshBox_->add<zio::ui::ColorButton>();
+    meshBox_       = fields_->add<zio::ui::VBox>();
+    auto* meshBody = addFoldout(meshBox_, "Malla", true);
+    meshBody->add<zio::ui::Label>(std::string("Color"));
+    color_ = meshBody->add<zio::ui::ColorButton>();
     color_->setOnChanged([this](zio::ui::Color c) {
         if (syncing_)
             return;
@@ -315,8 +371,8 @@ std::unique_ptr<zio::ui::Widget> InspectorPanel::build()
         }
     });
 
-    meshBox_->add<zio::ui::Label>(std::string("Escala UV"));
-    auto* uvRow = meshBox_->add<zio::ui::HBox>();
+    meshBody->add<zio::ui::Label>(std::string("Escala UV"));
+    auto* uvRow = meshBody->add<zio::ui::HBox>();
     for (int i = 0; i < 2; ++i)
     {
         auto* field = uvRow->add<zio::ui::NumberEdit>();
@@ -336,7 +392,7 @@ std::unique_ptr<zio::ui::Widget> InspectorPanel::build()
         uv_[i] = field;
     }
 
-    shadow_ = meshBox_->add<zio::ui::CheckBox>(std::string("Proyecta sombra"));
+    shadow_ = meshBody->add<zio::ui::CheckBox>(std::string("Proyecta sombra"));
     shadow_->setOnToggled([this](bool checked) {
         if (syncing_)
             return;
@@ -347,10 +403,9 @@ std::unique_ptr<zio::ui::Widget> InspectorPanel::build()
         }
     });
 
-    animBox_ = meshBox_->add<zio::ui::VBox>();
-    animBox_->add<zio::ui::Separator>();
-    animBox_->add<zio::ui::Label>(std::string("Animación"));
-    auto* pick = animBox_->add<zio::ui::HBox>();
+    animBox_       = meshBox_->add<zio::ui::VBox>();
+    auto* animBody = addFoldout(animBox_, "Animación", true);
+    auto* pick     = animBody->add<zio::ui::HBox>();
     auto* prev = pick->add<zio::ui::Button>(std::string("<"));
     animName_  = pick->add<zio::ui::Label>(std::string());
     animName_->setExpand(true, false);
@@ -372,7 +427,7 @@ std::unique_ptr<zio::ui::Widget> InspectorPanel::build()
     prev->setOnClick([step]() { step(-1); });
     next->setOnClick([step]() { step(1); });
 
-    auto* controls = animBox_->add<zio::ui::HBox>();
+    auto* controls = animBody->add<zio::ui::HBox>();
     animPlay_      = controls->add<zio::ui::Button>(std::string("Reproducir"));
     animPlay_->setOnClick([this]() {
         auto* mesh = services_.context().selectedMesh();
@@ -402,7 +457,7 @@ std::unique_ptr<zio::ui::Widget> InspectorPanel::build()
         services_.context().markDirty();
     });
 
-    animSpeed_ = animBox_->add<zio::ui::NumberEdit>();
+    animSpeed_ = animBody->add<zio::ui::NumberEdit>();
     animSpeed_->setStep(0.05);
     animSpeed_->setDecimals(2);
     animSpeed_->setLabel("Velocidad");
@@ -511,8 +566,16 @@ std::unique_ptr<zio::ui::Widget> FilesPanel::build()
     });
     remove_ = top->add<zio::ui::Button>(std::string("Eliminar"));
     remove_->setOnClick([this]() { showDelete(); });
-    status_ = top->add<zio::ui::Label>(std::string());
-    status_->setExpand(true, false);
+    filter_ = column->add<zio::ui::LineEdit>();
+    filter_->setPlaceholder("Filtrar archivos");
+    filter_->setOnChanged([this](const std::string& text) {
+        std::string lowered = text;
+        for (char& c : lowered)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        filterText_ = lowered;
+        applyFilter();
+    });
+    status_ = column->add<zio::ui::Label>(std::string());
 
     message_ = column->add<zio::ui::Label>(std::string("Abre o crea un proyecto desde el menú Proyecto."));
     message_->setColor(zio::ui::rgb(0x9ca3af));
@@ -564,6 +627,8 @@ void FilesPanel::setStatus(const std::string& text, bool error)
 {
     statusText_  = text;
     statusError_ = error;
+    if (!text.empty())
+        services_.log(text, error);
     status_->setText(text);
     status_->setColor(error ? services_.ui().theme().danger : zio::ui::rgb(0x9ca3af));
 }
@@ -686,8 +751,19 @@ void FilesPanel::showDelete()
 
 void FilesPanel::applyEntries(std::vector<AssetEntry> entries)
 {
-    std::string signature;
+    std::string signature = filterText_ + "#";
     for (const AssetEntry& entry : entries)
+        signature += entry.relative + "|";
+    if (signature == signature_)
+        return;
+    allEntries_ = std::move(entries);
+    applyFilter();
+}
+
+void FilesPanel::applyFilter()
+{
+    std::string signature = filterText_ + "#";
+    for (const AssetEntry& entry : allEntries_)
         signature += entry.relative + "|";
     if (signature == signature_)
         return;
@@ -697,7 +773,15 @@ void FilesPanel::applyEntries(std::vector<AssetEntry> entries)
     if (const AssetEntry* selected = selectedEntry())
         keep = selected->relative;
 
-    entries_ = std::move(entries);
+    entries_.clear();
+    for (const AssetEntry& entry : allEntries_)
+    {
+        std::string name = entry.relative;
+        for (char& c : name)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (filterText_.empty() || name.find(filterText_) != std::string::npos)
+            entries_.push_back(entry);
+    }
     std::vector<zio::ui::IconItem> items;
     for (const AssetEntry& entry : entries_)
         items.push_back(iconFor(entry));
@@ -749,6 +833,7 @@ void FilesPanel::refresh(float dt)
     {
         boundRoot_.clear();
         signature_.clear();
+        allEntries_.clear();
         entries_.clear();
         grid_->setItems({});
         updateButtons();
@@ -759,6 +844,7 @@ void FilesPanel::refresh(float dt)
     {
         boundRoot_ = project.rootDir();
         signature_.clear();
+        allEntries_.clear();
         entries_.clear();
         grid_->setItems({});
         setStatus(std::string(), false);
@@ -771,6 +857,47 @@ void FilesPanel::refresh(float dt)
         timer_ = 0.f;
         requestScan();
     }
+}
+
+std::unique_ptr<zio::ui::Widget> OutputPanel::build()
+{
+    auto column = std::make_unique<zio::ui::VBox>();
+    column->setPadding(Edges::all(8.f));
+    auto* top   = column->add<zio::ui::HBox>();
+    auto* clear = top->add<zio::ui::Button>(std::string("Limpiar"));
+    clear->setOnClick([this]() { lines_->clearChildren(); });
+    scroll_ = column->add<zio::ui::ScrollContainer>(true, false);
+    scroll_->setExpand(true, true);
+    lines_ = scroll_->add<zio::ui::VBox>();
+    lines_->setSeparation(1.f);
+    return column;
+}
+
+void OutputPanel::add(const std::string& text, bool error)
+{
+    if (!lines_)
+        return;
+    constexpr std::size_t kMaxLines = 300;
+    while (lines_->children().size() >= kMaxLines)
+        lines_->removeChild(lines_->children().front().get());
+
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+    localtime_s(&local, &now);
+    char stamp[16];
+    std::strftime(stamp, sizeof(stamp), "%H:%M:%S  ", &local);
+
+    auto* label = lines_->add<zio::ui::Label>(std::string(stamp) + text);
+    label->setColor(error ? services_.ui().theme().danger : zio::ui::rgb(0xc9cdd6));
+    scrollPending_ = true;
+}
+
+void OutputPanel::refresh()
+{
+    if (!scrollPending_ || !scroll_)
+        return;
+    scrollPending_ = false;
+    scroll_->setScroll({0.f, 1.0e7f});
 }
 
 std::unique_ptr<zio::ui::Widget> PerformancePanel::build()

@@ -45,6 +45,7 @@ public:
     bool toggled() const { return toggled_; }
     void setToggled(bool toggled) { toggled_ = toggled; }
     void setFlat(bool flat) { flat_ = flat; }
+    void setAlignLeft(bool left) { alignLeft_ = left; }
     void setPrimary(bool primary) { primary_ = primary; }
     void setOnClick(std::function<void()> callback) { onClick_ = std::move(callback); }
     void setOnToggled(std::function<void(bool)> callback) { onToggled_ = std::move(callback); }
@@ -62,6 +63,7 @@ private:
     bool toggle_  = false;
     bool toggled_ = false;
     bool flat_    = false;
+    bool alignLeft_ = false;
     bool primary_ = false;
     bool pressed_ = false;
     std::function<void()> onClick_;
