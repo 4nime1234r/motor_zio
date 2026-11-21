@@ -13,9 +13,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "EditorWindow.h"
 #include "core/Icons.h"
+#include "core/LayoutSettings.h"
 #include "core/Picking.h"
 #include "core/RecentProject.h"
 #include "core/SelectionGizmo.h"
@@ -89,6 +91,8 @@ EditorApp::EditorApp() : window_(std::make_unique<EditorWindow>())
     copyText(newProjectParent_, sizeof(newProjectParent_), launchDir.string());
 
     recentFile_ = recentProjectFile();
+    layoutFile_ = layoutSettingsFile();
+    layout_     = readLayoutSettings(layoutFile_);
     if (const auto recent = readRecentProject(recentFile_))
         copyText(openProjectPath_, sizeof(openProjectPath_), recent->string());
 }
@@ -681,8 +685,38 @@ void EditorApp::drawMenuBar()
 
     if (ImGui::BeginMenu("Ver"))
     {
-        if (ImGui::MenuItem("Restablecer diseño"))
-            resetLayout_ = true;
+        if (ImGui::BeginMenu("Posición de los paneles"))
+        {
+            for (int panel = 0; panel < PanelCount; ++panel)
+            {
+                if (!ImGui::BeginMenu(panelTitle(panel)))
+                    continue;
+                for (PanelSide side : {PanelSide::Left, PanelSide::Right, PanelSide::Bottom})
+                {
+                    if (ImGui::MenuItem(sideLabel(side), nullptr, layout_.side[panel] == side) &&
+                        layout_.side[panel] != side)
+                    {
+                        layout_.side[panel] = side;
+                        changeLayout();
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Interfaz fija", nullptr, layout_.locked))
+        {
+            layout_.locked = !layout_.locked;
+            writeLayoutSettings(layoutFile_, layout_);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Restablecer disposición"))
+        {
+            const bool locked = layout_.locked;
+            layout_           = LayoutSettings{};
+            layout_.locked    = locked;
+            changeLayout();
+        }
         ImGui::EndMenu();
     }
 
@@ -799,6 +833,12 @@ void EditorApp::drawViewportToolbar()
     ImGui::End();
 }
 
+void EditorApp::changeLayout()
+{
+    writeLayoutSettings(layoutFile_, layout_);
+    resetLayout_ = true;
+}
+
 void EditorApp::buildDefaultLayout(std::uint32_t dockspaceId, float width, float height)
 {
     const ImGuiID root = dockspaceId;
@@ -806,16 +846,43 @@ void EditorApp::buildDefaultLayout(std::uint32_t dockspaceId, float width, float
     ImGui::DockBuilderAddNode(root, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(root, ImVec2(width, height));
 
-    ImGuiID center = root;
-    ImGuiID left   = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
-    ImGuiID right  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, nullptr, &center);
-    ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.24f, nullptr, &center);
-    ImGuiID leftBottom = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.42f, nullptr, &left);
+    std::vector<int> panels[3];
+    for (int panel = 0; panel < PanelCount; ++panel)
+        panels[static_cast<int>(layout_.side[panel])].push_back(panel);
+    const std::vector<int>& left   = panels[static_cast<int>(PanelSide::Left)];
+    const std::vector<int>& right  = panels[static_cast<int>(PanelSide::Right)];
+    const std::vector<int>& bottom = panels[static_cast<int>(PanelSide::Bottom)];
 
-    ImGui::DockBuilderDockWindow("Jerarquía", left);
-    ImGui::DockBuilderDockWindow("Contenido", leftBottom);
-    ImGui::DockBuilderDockWindow("Inspector", right);
-    ImGui::DockBuilderDockWindow("Rendimiento", bottom);
+    ImGuiID center  = root;
+    ImGuiID leftId  = 0;
+    ImGuiID rightId = 0;
+    ImGuiID bottomId = 0;
+    if (!right.empty())
+        rightId = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, nullptr, &center);
+    if (!left.empty())
+        leftId = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, left.size() == 1 && right.empty() ? 0.22f : 0.26f,
+                                             nullptr, &center);
+    if (!bottom.empty())
+        bottomId = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.26f, nullptr, &center);
+
+    auto stack = [](ImGuiID node, const std::vector<int>& list, ImGuiDir direction) {
+        ImGuiID rest = node;
+        for (std::size_t i = 0; i + 1 < list.size(); ++i)
+        {
+            const float remaining = static_cast<float>(list.size() - i);
+            const float ratio     = list.size() == 2 ? 0.58f : 1.f / remaining;
+            ImGuiID first         = 0;
+            ImGuiID next          = ImGui::DockBuilderSplitNode(rest, direction, ratio, &first, &rest);
+            (void)next;
+            ImGui::DockBuilderDockWindow(panelTitle(list[i]), first);
+        }
+        if (!list.empty())
+            ImGui::DockBuilderDockWindow(panelTitle(list.back()), rest);
+    };
+    stack(leftId, left, ImGuiDir_Up);
+    stack(rightId, right, ImGuiDir_Up);
+    stack(bottomId, bottom, ImGuiDir_Left);
+
     ImGui::DockBuilderFinish(root);
 }
 
@@ -1046,6 +1113,29 @@ void EditorApp::drawUi(float frameTimeMs)
     }
     ImGui::DockSpaceOverViewport(dockspaceId, viewport,
                                  ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingOverCentralNode);
+
+    {
+        constexpr ImGuiDockNodeFlags kLockFlags = ImGuiDockNodeFlags_NoUndocking | ImGuiDockNodeFlags_NoDockingSplit |
+                                                  ImGuiDockNodeFlags_NoDockingOverMe |
+                                                  ImGuiDockNodeFlags_NoDockingOverOther |
+                                                  ImGuiDockNodeFlags_NoDockingOverEmpty;
+        std::vector<ImGuiDockNode*> pending;
+        if (ImGuiDockNode* rootNode = ImGui::DockBuilderGetNode(dockspaceId))
+            pending.push_back(rootNode);
+        while (!pending.empty())
+        {
+            ImGuiDockNode* node = pending.back();
+            pending.pop_back();
+            if (layout_.locked)
+                node->LocalFlags |= kLockFlags;
+            else
+                node->LocalFlags &= ~kLockFlags;
+            node->UpdateMergedFlags();
+            for (ImGuiDockNode* child : node->ChildNodes)
+                if (child)
+                    pending.push_back(child);
+        }
+    }
 
     viewRect_ = ViewRect{viewport->WorkPos.x, viewport->WorkPos.y, viewport->WorkSize.x, viewport->WorkSize.y};
     if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspaceId))

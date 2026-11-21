@@ -10,6 +10,7 @@
 #include "core/EditorCamera.h"
 #include "core/EditorContext.h"
 #include "core/Gizmo.h"
+#include "core/LayoutSettings.h"
 #include "panels/ContentBrowserPanel.h"
 #include "panels/DiagnosticsPanel.h"
 #include "panels/InspectorPanel.h"
@@ -58,6 +59,7 @@ private:
     void drawStatusBar(float frameTimeMs);
     void drawViewportToolbar();
     void buildDefaultLayout(std::uint32_t dockspaceId, float width, float height);
+    void changeLayout();
     void drawProjectPopups();
     void drawSceneSavePopups();
     void saveCurrentScene();
@@ -107,6 +109,8 @@ private:
     Updater updater_;
     bool restartAfterClose_ = false;
     ViewRect viewRect_;
+    LayoutSettings layout_;
+    std::filesystem::path layoutFile_;
     bool resetLayout_       = false;
 
     std::string imguiIniPath_;
