@@ -8,5 +8,7 @@
 - El Inspector reproduce las animaciones de los modelos.
 - Sistema de archivos plano: crear, editar y eliminar desde el clic derecho.
 - Nuevo menú Ayuda para buscar actualizaciones, con aviso y notas de cada versión.
-- Scripts de C++ para los nodos (onStart, onUpdate, onDestroy), que se guardan en la escena.
+- Scripts de C++ y de C# para los nodos (onStart, onUpdate, onDestroy), que se guardan en la escena. Los de C# se compilan desde Proyecto > Compilar scripts de C# y también se ejecutan con el botón Jugar.
+- El editor y los juegos de ejemplo ya no abren una ventana de consola.
+- El núcleo del motor se compila y se prueba también en Linux y macOS.
 - Nueva licencia: uso libre con atribución al autor.

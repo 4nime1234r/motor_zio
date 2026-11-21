@@ -6,7 +6,7 @@
 
 Zio es un motor de juegos 2D y 3D escrito en C++20 para Windows. Renderiza con Vulkan e incluye un editor visual para montar escenas sin escribir código.
 
-Es un proyecto en desarrollo activo. La versión actual es la **0.2.0**.
+Es un proyecto en desarrollo activo. La versión actual es la **0.3.0**.
 
 Zio es de uso libre con atribución: puedes usarlo y modificarlo como quieras, pero debes dar crédito a su autor. Mira la sección [Licencia](#licencia).
 
@@ -176,7 +176,7 @@ La carpeta `projects/` contiene ejemplos completos, entre ellos `Prueba3D`, una 
 
 ## Limitaciones actuales
 
-- Solo funciona en Windows.
+- El editor, la ventana y el dibujado solo funcionan en Windows. En Linux y macOS se compila el núcleo del motor sin ventana (física, escenas, modelos, animación, scripts de C++ y la interfaz sin dibujar) y sus pruebas, pero todavía no se abre una ventana ni se dibuja.
 - Los scripts de C++ se compilan con el juego: el editor guarda qué scripts tiene cada nodo, pero solo los ejecuta el juego, no el botón Jugar. Los de C# sí se ejecutan en el editor, pero necesitan el SDK de .NET 8 o superior para compilarse y el runtime de .NET para ejecutarse.
 - De los modelos glTF solo se usa el primer material (color base y textura externa); no hay PBR completo ni texturas incrustadas.
 - La animación de huesos se calcula en la CPU.
