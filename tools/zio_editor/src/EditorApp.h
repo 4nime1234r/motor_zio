@@ -115,6 +115,7 @@ private:
     LayoutSettings layout_;
     std::filesystem::path layoutFile_;
     bool resetLayout_       = false;
+    int layoutBuiltFrame_   = 0;
 
     std::string imguiIniPath_;
     std::filesystem::path recentFile_;

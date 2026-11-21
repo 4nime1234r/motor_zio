@@ -1110,8 +1110,9 @@ void EditorApp::drawUi(float frameTimeMs)
     if (resetLayout_ || ImGui::DockBuilderGetNode(dockspaceId) == nullptr)
     {
         buildDefaultLayout(dockspaceId, viewport->WorkSize.x, viewport->WorkSize.y);
-        resetLayout_   = false;
-        focusFilesTab_ = true;
+        resetLayout_       = false;
+        focusFilesTab_     = true;
+        layoutBuiltFrame_  = ImGui::GetFrameCount();
     }
     ImGui::DockSpaceOverViewport(dockspaceId, viewport,
                                  ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingOverCentralNode);
@@ -1151,6 +1152,19 @@ void EditorApp::drawUi(float frameTimeMs)
     contentBrowserPanel_.draw(context_);
     fileExplorerPanel_.draw(context_);
     diagnosticsPanel_.draw(frameTimeMs);
+
+    if (layout_.locked && ImGui::GetFrameCount() - layoutBuiltFrame_ > 3)
+    {
+        for (int panel = 0; panel < PanelCount; ++panel)
+        {
+            const ImGuiWindow* window = ImGui::FindWindowByName(panelTitle(panel));
+            if (window && window->WasActive && window->DockNode == nullptr)
+            {
+                resetLayout_ = true;
+                break;
+            }
+        }
+    }
 
     if (focusFilesTab_)
     {
