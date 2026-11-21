@@ -112,6 +112,21 @@ void writeNode(std::string& out, const Node3D& node, int level)
         }
     }
 
+    if (!node.scripts().empty())
+    {
+        out += ",\n";
+        field(out, in, "scripts");
+        out += '[';
+        bool firstScript = true;
+        for (const auto& slot : node.scripts())
+        {
+            out += firstScript ? "" : ", ";
+            firstScript = false;
+            writeString(out, slot.name);
+        }
+        out += ']';
+    }
+
     if (!node.children().empty())
     {
         out += ",\n";
@@ -333,6 +348,26 @@ struct Reader : json::Fields
 
         if (!common(o, *out, path))
             return nullptr;
+
+        if (const Value* list = o.find("scripts"))
+        {
+            const auto* names = std::get_if<Array>(&list->v);
+            if (!names)
+            {
+                fail(path, "\"scripts\" must be an array of names");
+                return nullptr;
+            }
+            for (const Value& entry : *names)
+            {
+                const auto* name = std::get_if<std::string>(&entry.v);
+                if (!name)
+                {
+                    fail(path, "\"scripts\" must be an array of names");
+                    return nullptr;
+                }
+                out->addScript(*name);
+            }
+        }
 
         if (const Value* f = o.find("children"))
         {

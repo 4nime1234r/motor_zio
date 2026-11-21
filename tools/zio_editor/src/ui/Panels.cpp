@@ -17,6 +17,7 @@
 #include <shellapi.h>
 
 #include "ui/EditorIcons.h"
+#include "zio/scripting/Script.h"
 #include "zio/jobs/JobSystem.h"
 #include "zio/renderer/BatchRenderer.h"
 
@@ -479,7 +480,79 @@ std::unique_ptr<zio::ui::Widget> InspectorPanel::build()
         mesh->setAnimationSpeed(static_cast<float>(value));
         services_.context().markDirty();
     });
+
+    scriptBox_ = fields_->add<zio::ui::VBox>();
+    auto* scriptBody = addFoldout(scriptBox_, "Scripts", true);
+    scriptList_      = scriptBody->add<zio::ui::VBox>();
+    auto* addScript  = scriptBody->add<zio::ui::Button>(std::string("Añadir script"));
+    addScript->setOnClick([this, addScript]() {
+        auto* node = services_.context().selected();
+        if (!node || syncing_)
+            return;
+        std::vector<MenuItem> items;
+        for (const std::string& name : scriptCandidates(*node))
+            items.push_back(MenuItem::item(name, [this, name]() {
+                if (auto* target = services_.context().selected())
+                {
+                    target->addScript(name);
+                    services_.context().markDirty();
+                    services_.log("Script " + name + " añadido a " + (target->name().empty() ? "(sin nombre)" : target->name()));
+                }
+            }));
+        if (items.empty())
+        {
+            MenuItem none = MenuItem::item("No hay scripts: crea un .cpp desde el Sistema de archivos");
+            none.enabled  = false;
+            items.push_back(std::move(none));
+        }
+        const zio::ui::Rect r = addScript->rect();
+        services_.showPopup(std::move(items), {r.x, r.bottom()});
+    });
     return scroll;
+}
+
+std::vector<std::string> InspectorPanel::scriptCandidates(const zio::scene3d::Node3D& node) const
+{
+    std::set<std::string> names;
+    const ProjectManager& project = services_.context().project();
+    if (project.isOpen())
+        for (const std::string& file : project.listFiles("assets/scripts", ".cpp"))
+        {
+            std::string stem = fs::path(file).stem().string();
+            if (!stem.empty())
+                names.insert(stem);
+        }
+    for (const std::string& name : zio::scripting::Registry::instance().names())
+        names.insert(name);
+    std::vector<std::string> out;
+    for (const std::string& name : names)
+        if (!node.hasScript(name))
+            out.push_back(name);
+    return out;
+}
+
+void InspectorPanel::rebuildScripts(zio::scene3d::Node3D& node)
+{
+    scriptList_->clearChildren();
+    for (const std::string& name : node.scriptNames())
+    {
+        auto* row   = scriptList_->add<zio::ui::HBox>();
+        auto* label = row->add<zio::ui::Label>(name);
+        label->setExpand(true, false);
+        if (!zio::scripting::Registry::instance().has(name))
+        {
+            label->setText(name + "  (se ejecuta en el juego)");
+            label->setColor(zio::ui::rgb(0x9ca3af));
+        }
+        auto* remove = row->add<zio::ui::Button>(std::string("Quitar"));
+        remove->setOnClick([this, name]() {
+            if (auto* target = services_.context().selected())
+            {
+                target->removeScript(name);
+                services_.context().markDirty();
+            }
+        });
+    }
 }
 
 void InspectorPanel::refresh()
@@ -520,6 +593,18 @@ void InspectorPanel::refresh()
             rot_[i]->setValue(ev[i]);
         if (!scale_[i]->editing())
             scale_[i]->setValue(sv[i]);
+    }
+
+    {
+        std::string signature;
+        for (const std::string& name : node->scriptNames())
+            signature += name + "|";
+        if (signature != scriptSignature_ || scriptNode_ != node)
+        {
+            scriptSignature_ = signature;
+            scriptNode_      = node;
+            rebuildScripts(*node);
+        }
     }
 
     if (mesh)

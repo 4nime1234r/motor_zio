@@ -12,6 +12,7 @@
 #include "zio/renderer/Color.h"
 #include "zio/renderer/Texture.h"
 #include "zio/scene3d/Mesh.h"
+#include "zio/scripting/Script.h"
 
 namespace zio::scene3d
 {
@@ -21,8 +22,8 @@ class Renderer3D;
 class ZIO_API Node3D
 {
 public:
-    Node3D()          = default;
-    virtual ~Node3D() = default;
+    Node3D() = default;
+    virtual ~Node3D();
 
     Node3D(const Node3D&)            = delete;
     Node3D& operator=(const Node3D&) = delete;
@@ -63,6 +64,20 @@ public:
 
     virtual void update(float dt) {}
 
+    struct ScriptSlot
+    {
+        std::string name;
+        std::unique_ptr<scripting::Script> instance;
+        bool started = false;
+    };
+
+    bool addScript(const std::string& name);
+    bool removeScript(const std::string& name);
+    bool hasScript(const std::string& name) const;
+    std::vector<std::string> scriptNames() const;
+    const std::vector<ScriptSlot>& scripts() const { return scripts_; }
+    void runScripts(float dt);
+
     void visit(Renderer3D& renderer);
 
 protected:
@@ -71,6 +86,7 @@ protected:
 private:
     Node3D* parent_ = nullptr;
     std::vector<std::unique_ptr<Node3D>> children_;
+    std::vector<ScriptSlot> scripts_;
     std::string name_;
 
     math::Vec3 position_        = math::Vec3::zero();

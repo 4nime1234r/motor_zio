@@ -15,6 +15,26 @@ namespace zio_editor
 namespace
 {
 
+std::string classNameFrom(std::string_view fileName)
+{
+    const auto dot  = fileName.find_last_of('.');
+    std::string out = std::string(dot == std::string_view::npos ? fileName : fileName.substr(0, dot));
+    for (char& c : out)
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_')
+            c = '_';
+    if (out.empty() || std::isdigit(static_cast<unsigned char>(out.front())))
+        out.insert(out.begin(), '_');
+    return out;
+}
+
+std::string scriptTemplate(const std::string& className)
+{
+    return "#include \"zio/scene3d/Node3D.h\"\n#include \"zio/scripting/Script.h\"\n\nclass " + className +
+           " : public zio::scripting::Script\n{\npublic:\n    void onStart() override\n    {\n    }\n\n    void "
+           "onUpdate(float dt) override\n    {\n    }\n};\n\nZIO_SCRIPT(" +
+           className + ")\n";
+}
+
 std::string lower(std::string_view text)
 {
     std::string out(text);
@@ -136,6 +156,10 @@ bool AssetFiles::create(const ProjectManager& project, std::string_view name, st
     {
         zio::scene3d::Scene3D blank;
         out << zio::scene3d::serializeScene3D(blank);
+    }
+    else if (extensionOf(name) == "cpp" && relative.rfind("assets/scripts/", 0) == 0)
+    {
+        out << scriptTemplate(classNameFrom(name));
     }
     out.close();
     if (!out)

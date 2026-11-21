@@ -6,6 +6,7 @@ set(ZIO_TESTS
     GltfTest
     SpriteAnimationTest
     SkeletonTest
+    ScriptTest
 )
 
 foreach(testName IN LISTS ZIO_TESTS)

@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 #include "core/AssetFiles.h"
@@ -70,6 +71,15 @@ int main()
     check(zio::scene3d::loadScene3DFile(loaded, (project.rootDir() / "assets" / "scenes" / "nivel.zscene3d").string(), &error),
           "la escena creada se puede abrir");
     check(AssetFiles::create(project, "notas.txt", &relative, &error) && relative == "assets/notas.txt", "crea un archivo suelto");
+    check(AssetFiles::create(project, "mi-jugador.cpp", &relative, &error) && relative == "assets/scripts/mi-jugador.cpp",
+          "crea un script de C++");
+    {
+        std::ifstream in(project.rootDir() / "assets" / "scripts" / "mi-jugador.cpp");
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        check(text.find("class mi_jugador : public zio::scripting::Script") != std::string::npos &&
+                  text.find("ZIO_SCRIPT(mi_jugador)") != std::string::npos && text.find("onUpdate") != std::string::npos,
+              "el script nuevo trae su plantilla con un nombre de clase valido");
+    }
 
     const auto entries = AssetFiles::scan(project.rootDir());
     check(has(entries, "assets/scripts/jugador.cs"), "el listado incluye el script");

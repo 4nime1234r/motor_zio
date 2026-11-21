@@ -8,6 +8,76 @@
 namespace zio::scene3d
 {
 
+Node3D::~Node3D()
+{
+    for (ScriptSlot& slot : scripts_)
+        if (slot.instance && slot.started)
+            slot.instance->onDestroy();
+}
+
+bool Node3D::addScript(const std::string& name)
+{
+    if (name.empty() || hasScript(name))
+        return false;
+    ScriptSlot slot;
+    slot.name     = name;
+    slot.instance = scripting::Registry::instance().create(name);
+    if (slot.instance)
+        slot.instance->node_ = this;
+    const bool created = slot.instance != nullptr;
+    scripts_.push_back(std::move(slot));
+    return created;
+}
+
+bool Node3D::removeScript(const std::string& name)
+{
+    for (std::size_t i = 0; i < scripts_.size(); ++i)
+    {
+        if (scripts_[i].name != name)
+            continue;
+        ScriptSlot slot = std::move(scripts_[i]);
+        scripts_.erase(scripts_.begin() + static_cast<std::ptrdiff_t>(i));
+        if (slot.instance && slot.started)
+            slot.instance->onDestroy();
+        return true;
+    }
+    return false;
+}
+
+bool Node3D::hasScript(const std::string& name) const
+{
+    for (const ScriptSlot& slot : scripts_)
+        if (slot.name == name)
+            return true;
+    return false;
+}
+
+std::vector<std::string> Node3D::scriptNames() const
+{
+    std::vector<std::string> names;
+    for (const ScriptSlot& slot : scripts_)
+        names.push_back(slot.name);
+    return names;
+}
+
+void Node3D::runScripts(float dt)
+{
+    for (std::size_t i = 0; i < scripts_.size(); ++i)
+    {
+        scripting::Script* script = scripts_[i].instance.get();
+        if (!script)
+            continue;
+        if (!scripts_[i].started)
+        {
+            scripts_[i].started = true;
+            script->onStart();
+            if (i >= scripts_.size() || scripts_[i].instance.get() != script)
+                continue;
+        }
+        script->onUpdate(dt);
+    }
+}
+
 Node3D* Node3D::addChild(std::unique_ptr<Node3D> child)
 {
     child->parent_ = this;

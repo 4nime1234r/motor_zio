@@ -90,6 +90,12 @@ private:
     zio::ui::CheckBox* animLoop_   = nullptr;
     zio::ui::NumberEdit* animSpeed_ = nullptr;
     int animIndex_ = 0;
+    zio::ui::Widget* scriptBox_  = nullptr;
+    zio::ui::VBox* scriptList_   = nullptr;
+    std::string scriptSignature_;
+    const zio::scene3d::Node3D* scriptNode_ = nullptr;
+    void rebuildScripts(zio::scene3d::Node3D& node);
+    std::vector<std::string> scriptCandidates(const zio::scene3d::Node3D& node) const;
     bool syncing_ = false;
 };
 

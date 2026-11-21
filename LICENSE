@@ -1,6 +1,6 @@
-Zio - Licencia Propietaria
+Zio - Licencia de uso libre con atribución
 
-Copyright (c) 2026 4nime1234r. Todos los derechos reservados.
+Copyright (c) 2026 4nime1234r.
 
 Esta licencia se aplica al motor Zio y al editor Zio, es decir, a todos los
 archivos de este repositorio excepto los iconos de Lucide (directorio
@@ -8,39 +8,35 @@ archivos de este repositorio excepto los iconos de Lucide (directorio
 ellos), que se distribuyen bajo su propia licencia (consulta
 third_party/icons/LICENSE-lucide.txt).
 
-1. Propiedad
-   El Software es y seguirá siendo propiedad exclusiva del Autor. Nada de esta
-   licencia te transfiere la propiedad ni ningún derecho de propiedad
-   intelectual.
+1. Permiso
+   Se concede permiso, sin coste, a cualquier persona que obtenga una copia de
+   este software y de sus archivos asociados (el "Software") para usarlo,
+   copiarlo, modificarlo de cualquier manera, fusionarlo, publicarlo,
+   distribuirlo, sublicenciarlo y venderlo, con cualquier fin, incluido el
+   comercial, y para permitir que otros lo hagan, siempre que se cumpla la
+   condición de la sección 2.
 
-2. Uso permitido
-   Puedes descargar, compilar y ejecutar el Software, y usarlo para crear tus
-   propios juegos y aplicaciones ("Tus Obras"). Tus Obras son tuyas. Puedes
-   distribuir Tus Obras, incluida la forma compilada del Software que quede
-   enlazada en ellas, sin pagar regalías.
+2. Condición: dar crédito al autor
+   Debes dar crédito a 4nime1234r como autor original de Zio:
+   a. En toda copia o parte sustancial del Software, en código fuente o en
+      binario, debes conservar el aviso de copyright y esta licencia.
+   b. Si publicas un juego, una aplicación o cualquier producto hecho con Zio,
+      debes mostrar un crédito visible, por ejemplo en su pantalla de créditos,
+      en su pantalla "acerca de" o en su página de distribución, con un texto
+      como: "Hecho con Zio, de 4nime1234r".
+   c. Si publicas una versión modificada del motor o del editor, o un motor o
+      editor derivado de ellos, debes indicar de forma clara, en su README y en
+      su "acerca de", que está basado en Zio de 4nime1234r, y debes enlazar
+      a https://github.com/4nime1234r/motor_zio.
 
-3. Restricciones
-   Sin el permiso previo y por escrito del Autor, no puedes:
-   a. copiar, modificar, adaptar, traducir ni crear obras derivadas del
-      Software o de su código fuente, salvo lo estrictamente necesario para
-      compilarlo y usarlo como se describe en la sección 2;
-   b. redistribuir, publicar, sublicenciar, vender, alquilar ni prestar el
-      Software o su código fuente, total o parcialmente, en forma de código o
-      de binario, salvo como parte de Tus Obras en forma compilada;
-   c. ofrecer el Software, ni un motor o editor sustancialmente similar derivado
-      de él, como producto o servicio a terceros;
-   d. eliminar o alterar cualquier aviso de copyright, de licencia o de
-      atribución;
-   e. usar el Software, su código fuente o su nombre para entrenar, ajustar o
-      evaluar modelos de aprendizaje automático;
-   f. usar el nombre "Zio" o el nombre del Autor para respaldar o promocionar
-      productos sin permiso.
+3. Lo que no se puede hacer
+   No puedes presentar el Software, ni una versión modificada, como si fuera
+   obra tuya, ni quitar o alterar los avisos de autoría.
 
-4. Versiones y actualizaciones
-   Las versiones oficiales las publica únicamente el Autor en el repositorio
-   oficial. Cada versión se licencia bajo los términos de la licencia incluida
-   en esa versión. Usar una versión más reciente no concede derechos
-   adicionales.
+4. Versiones modificadas
+   Quien modifica el Software es responsable de sus modificaciones. Las
+   versiones oficiales las publica únicamente el Autor en el repositorio
+   oficial.
 
 5. Componentes de terceros
    El Software incluye componentes de terceros con sus propias licencias,
@@ -48,9 +44,9 @@ third_party/icons/LICENSE-lucide.txt).
    esos componentes.
 
 6. Terminación
-   Esta licencia termina automáticamente si incumples cualquiera de sus
-   términos. Al terminar, debes dejar de usar el Software y eliminar todas las
-   copias.
+   Esta licencia termina automáticamente si incumples la condición de la
+   sección 2. Si corriges el incumplimiento, tus derechos se restablecen desde
+   ese momento.
 
 7. Sin garantía
    EL SOFTWARE SE PROPORCIONA "TAL CUAL", SIN GARANTÍA DE NINGÚN TIPO, EXPRESA
@@ -64,5 +60,5 @@ third_party/icons/LICENSE-lucide.txt).
    SOFTWARE.
 
 9. Contacto
-   Para permisos que vayan más allá de esta licencia, contacta con el Autor a
-   través de su perfil de GitHub: https://github.com/4nime1234r.
+   Para dudas sobre esta licencia, contacta con el Autor a través de su perfil
+   de GitHub: https://github.com/4nime1234r.

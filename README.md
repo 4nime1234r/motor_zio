@@ -39,7 +39,7 @@ El editor vive en `tools/zio_editor` y está hecho con `zio::ui`, la librería d
 - Crear y abrir proyectos. Cada proyecto es una carpeta con `project.zio` y subcarpetas de modelos, texturas y escenas.
 - Abrir, guardar y guardar como escenas 3D, con aviso si hay cambios sin guardar.
 - Añadir nodos vacíos, cubos y modelos `.obj`, `.gltf` y `.glb`.
-- Interfaz parecida a la de Godot: panel Escena con filtro de nodos y Sistema de archivos a la izquierda, visor 3D con la pestaña de la escena en el centro, Inspector con secciones plegables a la derecha, y abajo Salida (mensajes del editor) y Rendimiento. Los paneles se pueden colocar a la izquierda, a la derecha o abajo.
+- Interfaz propia: panel Escena con filtro de nodos y Sistema de archivos a la izquierda, visor 3D con la pestaña de la escena en el centro, Inspector con secciones plegables a la derecha, y abajo Salida (mensajes del editor) y Rendimiento. Los paneles se pueden colocar a la izquierda, a la derecha o abajo.
 - Sistema de archivos: una lista plana con todos los archivos, sin carpetas, con filtro, donde solo se puede crear, editar o eliminar, y esas opciones aparecen únicamente al hacer clic derecho. Cada archivo nuevo va a la carpeta que le corresponde según su tipo.
 - Visor 3D con cuadrícula, selección por clic y gizmos para mover, rotar y escalar.
 - Selección múltiple, copiar, pegar y duplicar.
@@ -123,7 +123,7 @@ La carpeta `projects/` contiene ejemplos completos, entre ellos `Prueba3D`, una 
 
 - La animación de huesos se calcula en la CPU.
 - De los modelos glTF solo se usa el primer material (color base y textura externa); no hay PBR completo, huesos ni texturas incrustadas.
-- No hay scripting: el juego se escribe en C++.
+- Los scripts son de C++ y se compilan con el juego; todavía no hay scripts de C#. El editor guarda qué scripts tiene cada nodo, pero solo los ejecuta el juego.
 - Solo funciona en Windows.
 
 ## Estructura
@@ -140,8 +140,8 @@ Para publicar una versión nueva: sube el número de `VERSION` en `CMakeLists.tx
 
 ## Licencia
 
-Zio es software propietario. Copyright (c) 2026 4nime1234r. Todos los derechos reservados.
+Zio es de uso libre con atribución. Copyright (c) 2026 4nime1234r.
 
-Puedes compilarlo y usarlo para crear tus propios juegos y distribuirlos sin regalías, pero no puedes copiar, modificar ni redistribuir el motor o su código. Consulta el archivo [LICENSE](LICENSE) para los términos completos.
+Puedes usarlo, modificarlo de cualquier manera, distribuirlo y venderlo, incluso en proyectos comerciales, siempre que des crédito a 4nime1234r como autor original de Zio: en tus juegos, con un crédito visible como "Hecho con Zio, de 4nime1234r", y en cualquier versión modificada del motor, indicando que está basada en Zio y enlazando a este repositorio. Consulta el archivo [LICENSE](LICENSE) para los términos completos.
 
 Los iconos del editor son de [Lucide](https://lucide.dev), gratuitos y de licencia abierta (ISC, y MIT para los derivados de Feather). El texto de la licencia está en `third_party/icons/LICENSE-lucide.txt`.

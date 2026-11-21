@@ -9,6 +9,7 @@ void Scene3D::updateChildren(Node3D& parent, float dt)
     {
         Node3D* child = parent.children()[i].get();
         child->update(dt);
+        child->runScripts(dt);
 
         const auto& siblings = parent.children();
         if (i >= siblings.size() || siblings[i].get() != child)
@@ -23,6 +24,7 @@ void Scene3D::update(float dt)
 {
     root_.updateWorldMatrix(math::Mat4::identity());
     root_.update(dt);
+    root_.runScripts(dt);
     updateChildren(root_, dt);
 }
 
