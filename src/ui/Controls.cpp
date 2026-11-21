@@ -25,14 +25,21 @@ Label::Label(std::string text) : text_(std::move(text))
     setMouseTransparent(true);
 }
 
+Font& Label::activeFont() const
+{
+    if (bold_ && theme().fontBold)
+        return *theme().fontBold;
+    return font();
+}
+
 Vec2 Label::contentMinSize() const
 {
-    return {font().textWidth(text_), font().lineHeight()};
+    return {activeFont().textWidth(text_), activeFont().lineHeight()};
 }
 
 void Label::draw(Painter& painter)
 {
-    Font& f         = font();
+    Font& f         = activeFont();
     const float w   = f.textWidth(text_);
     float x         = rect().x;
     if (align_ == Align::Center)
@@ -237,6 +244,11 @@ std::string LineEdit::selectedText() const
     return text_.substr(from, to - from);
 }
 
+void LineEdit::moveCaretToEnd()
+{
+    moveCaret(text_.size(), false);
+}
+
 void LineEdit::selectAll()
 {
     anchor_ = 0;
@@ -345,6 +357,8 @@ void LineEdit::onFocusChanged(bool focused)
     {
         dragging_ = false;
         anchor_   = caret_;
+        if (onFocusLost_)
+            onFocusLost_();
     }
 }
 
@@ -488,6 +502,8 @@ bool LineEdit::onKeyDown(const KeyEvent& event)
             onSubmit_(text_);
         return true;
     case KeyCode::Escape:
+        if (onCancel_)
+            onCancel_();
         if (context())
             context()->setFocus(nullptr);
         return true;

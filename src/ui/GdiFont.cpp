@@ -35,14 +35,14 @@ constexpr int kPadding   = 2;
 class GdiFont final : public AtlasFont
 {
 public:
-    GdiFont(std::string_view family, float sizePx) : size_(sizePx)
+    GdiFont(std::string_view family, float sizePx, bool bold) : size_(sizePx)
     {
         dc_ = CreateCompatibleDC(nullptr);
         if (!dc_)
             return;
 
         const std::wstring wideFamily(family.begin(), family.end());
-        font_ = CreateFontW(-static_cast<int>(std::lround(sizePx)), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        font_ = CreateFontW(-static_cast<int>(std::lround(sizePx)), 0, 0, 0, bold ? FW_SEMIBOLD : FW_NORMAL, FALSE, FALSE, FALSE,
                             DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
                             DEFAULT_PITCH | FF_DONTCARE, wideFamily.c_str());
         if (!font_)
@@ -279,9 +279,9 @@ private:
 
 }
 
-std::shared_ptr<AtlasFont> createSystemFont(std::string_view family, float sizePx)
+std::shared_ptr<AtlasFont> createSystemFont(std::string_view family, float sizePx, bool bold)
 {
-    auto font = std::make_shared<GdiFont>(family, sizePx);
+    auto font = std::make_shared<GdiFont>(family, sizePx, bold);
     if (!font->ready())
         return nullptr;
     return font;
@@ -294,7 +294,7 @@ std::shared_ptr<AtlasFont> createSystemFont(std::string_view family, float sizeP
 namespace zio::ui
 {
 
-std::shared_ptr<AtlasFont> createSystemFont(std::string_view, float)
+std::shared_ptr<AtlasFont> createSystemFont(std::string_view, float, bool)
 {
     return nullptr;
 }

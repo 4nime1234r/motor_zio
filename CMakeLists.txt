@@ -59,15 +59,19 @@ add_library(engine STATIC
     src/scene3d/SceneIO3D.cpp
     src/scene2d/Sprite.cpp
     src/ui/BatchPainter.cpp
+    src/ui/ColorPicker.cpp
     src/ui/Containers.cpp
     src/ui/Controls.cpp
     src/ui/Core.cpp
     src/ui/Dock.cpp
     src/ui/EngineHost.cpp
+    src/ui/Fields.cpp
     src/ui/Menus.cpp
     src/ui/GdiFont.cpp
+    src/ui/IconGrid.cpp
     src/ui/Text.cpp
     src/ui/Tree.cpp
+    src/ui/Viewport.cpp
 )
 add_library(zio::engine ALIAS engine)
 set_target_properties(engine PROPERTIES OUTPUT_NAME zio_engine)

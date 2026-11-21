@@ -104,6 +104,7 @@ public:
     virtual void onMouseEnter() {}
     virtual void onMouseLeave() {}
     virtual void onFocusChanged(bool focused) { (void)focused; }
+    virtual void onPopupClosed() {}
     virtual Cursor cursorAt(Vec2 position) const { (void)position; return Cursor::Arrow; }
 
     void layoutTree();

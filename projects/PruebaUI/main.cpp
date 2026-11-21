@@ -17,6 +17,8 @@ protected:
         context_ = std::make_unique<ui::Context>();
         if (auto font = ui::createSystemFont("Segoe UI", 17.f))
             context_->theme().font = font;
+        if (auto bold = ui::createSystemFont("Segoe UI", 17.f, true))
+            context_->theme().fontBold = bold;
         host_ = std::make_unique<ui::EngineHost>(*context_);
         build();
         return true;
@@ -48,6 +50,8 @@ protected:
     }
 
 private:
+    using Item = ui::MenuItem;
+
     ui::Panel* makePanel(ui::Widget* parent, ui::Color color)
     {
         auto* panel = parent->add<ui::Panel>();
@@ -56,55 +60,56 @@ private:
         return panel;
     }
 
-    std::vector<ui::MenuItem> objectMenu()
+    std::vector<Item> sideMenu(const std::string& id)
     {
-        using ui::MenuItem;
-        return {MenuItem::submenuItem("Añadir", {MenuItem::item("Nodo vacío"), MenuItem::item("Cubo"),
-                                                  MenuItem::item("Malla (.obj)")}),
-                MenuItem::line(), MenuItem::item("Duplicar", {}, "Ctrl+D"), MenuItem::item("Eliminar", {}, "Supr")};
+        std::vector<Item> items;
+        const std::pair<const char*, ui::DockSide> sides[] = {{"Izquierda", ui::DockSide::Left},
+                                                               {"Derecha", ui::DockSide::Right},
+                                                               {"Abajo", ui::DockSide::Bottom}};
+        for (const auto& [name, side] : sides)
+            items.push_back(Item::check(name, dock_->sideOf(id) == side, [this, id, side = side]() { dock_->movePanel(id, side); }));
+        return items;
     }
 
-    void build()
+    std::vector<Item> viewMenu()
     {
-        using ui::MenuItem;
-        const ui::Theme& theme = context_->theme();
-        auto* page             = context_->root().add<ui::VBox>();
-        page->setSeparation(0.f);
+        std::vector<Item> panels;
+        panels.push_back(Item::submenuItem("Jerarquía", sideMenu("jerarquia")));
+        panels.push_back(Item::submenuItem("Archivos", sideMenu("archivos")));
+        panels.push_back(Item::submenuItem("Inspector", sideMenu("inspector")));
+        panels.push_back(Item::submenuItem("Rendimiento", sideMenu("rendimiento")));
+        return {Item::submenuItem("Posición de los paneles", std::move(panels)), Item::line(),
+                Item::item("Restablecer disposición", [this]() {
+                    dock_->movePanel("jerarquia", ui::DockSide::Left);
+                    dock_->movePanel("archivos", ui::DockSide::Left);
+                    dock_->movePanel("inspector", ui::DockSide::Right);
+                    dock_->movePanel("rendimiento", ui::DockSide::Bottom);
+                })};
+    }
 
-        auto* top = makePanel(page, theme.deep);
-        top->setPadding(ui::Edges::symmetric(6.f, 0.f));
-        auto* topRow = top->add<ui::HBox>();
-        auto* bar    = topRow->add<ui::MenuBar>();
-        bar->addMenu("Proyecto", std::vector<MenuItem>{MenuItem::item("Nuevo proyecto..."), MenuItem::item("Abrir proyecto...")});
-        bar->addMenu("Escena", std::vector<MenuItem>{MenuItem::item("Guardar", {}, "Ctrl+S"), MenuItem::item("Guardar como...")});
-        bar->addMenu("Editar", std::vector<MenuItem>{MenuItem::item("Copiar", {}, "Ctrl+C"), MenuItem::item("Pegar", {}, "Ctrl+V"),
-                                                      MenuItem::line(), MenuItem::item("Deshacer", {}, "Ctrl+Z")});
-        bar->addMenu("Objeto", [this]() { return objectMenu(); });
-        bar->addMenu("Ver", [this]() {
-            return std::vector<MenuItem>{MenuItem::check("Interfaz fija", fixed_, [this]() { fixed_ = !fixed_; }),
-                                         MenuItem::line(), MenuItem::item("Restablecer disposición")};
-        });
-        auto* spacer = topRow->add<ui::Widget>();
-        spacer->setExpand(true, false);
-        auto* play = topRow->add<ui::Button>(std::string("Jugar"));
-        play->setToggle(true);
-        play->setTooltip("Ejecuta la escena (F5)");
-        auto* stop = topRow->add<ui::Button>(std::string("Detener"));
-        stop->setTooltip("Detiene la escena (F5)");
+    std::vector<ui::IconItem> fileItems()
+    {
+        auto make = [](const char* name, ui::Color color, const char* badge, bool folder) {
+            ui::IconItem item;
+            item.text   = name;
+            item.color  = color;
+            item.badge  = badge;
+            item.folder = folder;
+            return item;
+        };
+        const ui::Color folder = ui::rgb(0xfacc15);
+        return {make("escenas", folder, "", true),        make("modelos", folder, "", true),
+                make("texturas", folder, "", true),       make("audio", folder, "", true),
+                make("scripts", folder, "", true),        make("nivel1.zscene3d", ui::rgb(0x818cf8), "ESC", false),
+                make("cubo.obj", ui::rgb(0x66d98c), "3D", false), make("suelo.png", ui::rgb(0x4dd0e1), "IMG", false),
+                make("salto.wav", ui::rgb(0xf472b6), "SND", false), make("Jugador.cs", ui::rgb(0xc084fc), "C#", false),
+                make("Enemigo.cpp", ui::rgb(0xc084fc), "C++", false), make("notas.txt", ui::rgb(0x9ca3af), "TXT", false)};
+    }
 
-        auto* body = page->add<ui::SplitContainer>(false);
-        body->setExpand(true, true);
-        body->setRatio(0.22f);
-
-        auto* left = body->add<ui::SplitContainer>(true);
-        left->setRatio(0.55f);
-
-        auto* hierarchy       = makePanel(left, theme.panel);
-        auto* hierarchyColumn = hierarchy->add<ui::VBox>();
-        hierarchyColumn->add<ui::Label>(std::string("Jerarquía"))->setColor(theme.textDim);
-        auto* scroll = hierarchyColumn->add<ui::ScrollContainer>(true, false);
-        scroll->setExpand(true, true);
-        auto* tree = scroll->add<ui::TreeView>();
+    std::unique_ptr<ui::Widget> hierarchyPanel()
+    {
+        auto scroll = std::make_unique<ui::ScrollContainer>(true, false);
+        auto* tree  = scroll->add<ui::TreeView>();
         auto* scene = tree->root()->add("Escena");
         scene->iconColor = ui::rgb(0x818cf8);
         scene->add("Cámara")->iconColor = ui::rgb(0x4dd0e1);
@@ -115,60 +120,109 @@ private:
         group->add("Cubo")->iconColor   = ui::rgb(0x66d98c);
         group->add("Esfera")->iconColor = ui::rgb(0x66d98c);
         tree->setOnContextMenu([this](ui::TreeItem*, ui::Vec2 position) {
-            auto popup = std::make_unique<ui::PopupMenu>(objectMenu());
+            auto popup = std::make_unique<ui::PopupMenu>(std::vector<Item>{
+                Item::submenuItem("Añadir", {Item::item("Nodo vacío"), Item::item("Cubo")}), Item::line(),
+                Item::item("Duplicar", {}, "Ctrl+D"), Item::item("Eliminar", {}, "Supr")});
             popup->setAnchor(position);
             context_->openPopup(std::move(popup));
         });
+        return scroll;
+    }
 
-        auto* files       = left->add<ui::TabContainer>();
-        auto* filesPage   = files->addPage(std::make_unique<ui::Panel>(), "Archivos");
-        auto* filesColumn = filesPage->add<ui::VBox>();
-        filesColumn->setPadding(ui::Edges::all(8.f));
-        filesColumn->add<ui::LineEdit>()->setPlaceholder("Buscar archivos...");
-        auto* filesScroll = filesColumn->add<ui::ScrollContainer>(true, false);
-        filesScroll->setExpand(true, true);
-        auto* filesTree = filesScroll->add<ui::TreeView>();
-        auto* assets    = filesTree->root()->add("assets");
-        assets->iconColor = ui::rgb(0xfacc15);
-        auto* scenes = assets->add("escenas");
-        scenes->iconColor = ui::rgb(0xfacc15);
-        scenes->add("nivel1.zscene3d")->iconColor = ui::rgb(0x818cf8);
-        scenes->add("menu.zscene3d")->iconColor   = ui::rgb(0x818cf8);
-        auto* scripts = assets->add("scripts");
-        scripts->iconColor = ui::rgb(0xfacc15);
-        scripts->add("Jugador.cs")->iconColor  = ui::rgb(0xc084fc);
-        scripts->add("Enemigo.cpp")->iconColor = ui::rgb(0xc084fc);
-        assets->add("modelos")->iconColor   = ui::rgb(0xfacc15);
-        assets->add("texturas")->iconColor  = ui::rgb(0xfacc15);
-        files->addPage(std::make_unique<ui::Panel>(), "Rendimiento")->add<ui::Label>(std::string("60 FPS"));
+    std::unique_ptr<ui::Widget> filesPanel()
+    {
+        auto column = std::make_unique<ui::VBox>();
+        column->setPadding(ui::Edges::all(8.f));
+        auto* top    = column->add<ui::HBox>();
+        auto* search = top->add<ui::LineEdit>();
+        search->setPlaceholder("Buscar archivos...");
+        search->setExpand(true, false);
+        auto* mode = top->add<ui::Button>(std::string("Lista"));
+        mode->setToggle(true);
+        mode->setTooltip("Cambia entre iconos y lista");
 
-        auto* middle = body->add<ui::SplitContainer>(false);
-        middle->setRatio(0.74f);
+        auto* scroll = column->add<ui::ScrollContainer>(true, false);
+        scroll->setExpand(true, true);
+        auto* grid = scroll->add<ui::IconGrid>();
+        grid->setItems(fileItems());
+        mode->setOnToggled([grid](bool list) { grid->setListMode(list); });
+        return column;
+    }
 
-        auto* viewport      = makePanel(middle, ui::rgb(0x0f1117));
-        auto* viewportLabel = viewport->add<ui::Label>(std::string("Aquí iría el visor 3D"));
-        viewportLabel->setAlign(ui::Align::Center);
-        viewportLabel->setColor(theme.textDim);
-
-        auto* inspector       = makePanel(middle, theme.panel);
-        auto* inspectorColumn = inspector->add<ui::VBox>();
-        inspectorColumn->add<ui::Label>(std::string("Inspector"))->setColor(theme.textDim);
-        inspectorColumn->add<ui::Separator>();
-        inspectorColumn->add<ui::Label>(std::string("Nombre"));
-        inspectorColumn->add<ui::LineEdit>()->setText("Cubo");
-        inspectorColumn->add<ui::Label>(std::string("Posición"));
-        auto* position = inspectorColumn->add<ui::HBox>();
-        for (const char* value : {"0.0", "1.5", "-2.0"})
-            position->add<ui::LineEdit>()->setText(value);
-        inspectorColumn->add<ui::Label>(std::string("Calidad de sombras"));
-        auto* quality = inspectorColumn->add<ui::OptionButton>();
+    std::unique_ptr<ui::Widget> inspectorPanel()
+    {
+        auto outer = std::make_unique<ui::Panel>();
+        outer->setPadding(ui::Edges::all(10.f));
+        auto* column = outer->add<ui::VBox>();
+        auto* title  = column->add<ui::Label>(std::string("Cubo"));
+        title->setBold(true);
+        column->add<ui::Separator>();
+        column->add<ui::Label>(std::string("Nombre"));
+        column->add<ui::LineEdit>()->setText("Cubo");
+        column->add<ui::Label>(std::string("Posición"));
+        auto* position = column->add<ui::HBox>();
+        const std::pair<const char*, ui::Color> axes[] = {{"X", ui::rgb(0xef4444)}, {"Y", ui::rgb(0x4ade80)}, {"Z", ui::rgb(0x60a5fa)}};
+        double values[]                                = {0.0, 1.5, -2.0};
+        for (int i = 0; i < 3; ++i)
+        {
+            auto* field = position->add<ui::NumberEdit>();
+            field->setStep(0.1);
+            field->setLabel(axes[i].first, axes[i].second);
+            field->setValue(values[i]);
+            field->setExpand(true, false);
+        }
+        column->add<ui::Label>(std::string("Color"));
+        auto* color = column->add<ui::ColorButton>();
+        color->setColor(ui::rgb(0x6366f1));
+        column->add<ui::Label>(std::string("Calidad de sombras"));
+        auto* quality = column->add<ui::OptionButton>();
         quality->setItems({"Baja", "Media", "Alta"});
         quality->setSelected(1);
-        auto* shadow = inspectorColumn->add<ui::CheckBox>(std::string("Proyecta sombra"));
+        auto* shadow = column->add<ui::CheckBox>(std::string("Proyecta sombra"));
         shadow->setChecked(true);
         shadow->setTooltip("El objeto proyecta sombra sobre los demás");
-        inspectorColumn->add<ui::CheckBox>(std::string("Visible"))->setChecked(true);
-        progress_ = inspectorColumn->add<ui::ProgressBar>();
+        column->add<ui::Label>(std::string("Notas"));
+        auto* notes = column->add<ui::TextEdit>();
+        notes->setText("Primera línea\nSegunda línea\nTercera línea");
+        notes->setExpand(true, true);
+        progress_ = column->add<ui::ProgressBar>();
+        return outer;
+    }
+
+    void build()
+    {
+        const ui::Theme& theme = context_->theme();
+        auto* page             = context_->root().add<ui::VBox>();
+        page->setSeparation(0.f);
+
+        auto* top = makePanel(page, theme.deep);
+        top->setPadding(ui::Edges::symmetric(6.f, 0.f));
+        auto* topRow = top->add<ui::HBox>();
+        auto* bar    = topRow->add<ui::MenuBar>();
+        bar->addMenu("Proyecto", std::vector<Item>{Item::item("Nuevo proyecto..."), Item::item("Abrir proyecto...")});
+        bar->addMenu("Escena", std::vector<Item>{Item::item("Guardar", {}, "Ctrl+S"), Item::item("Guardar como...")});
+        bar->addMenu("Editar", std::vector<Item>{Item::item("Copiar", {}, "Ctrl+C"), Item::item("Pegar", {}, "Ctrl+V")});
+        bar->addMenu("Ver", [this]() { return viewMenu(); });
+        auto* spacer = topRow->add<ui::Widget>();
+        spacer->setExpand(true, false);
+        auto* play = topRow->add<ui::Button>(std::string("Jugar"));
+        play->setToggle(true);
+        play->setTooltip("Ejecuta la escena (F5)");
+        topRow->add<ui::Button>(std::string("Detener"))->setTooltip("Detiene la escena (F5)");
+
+        dock_ = page->add<ui::DockSpace>();
+        dock_->setExpand(true, true);
+        auto* viewport = new ui::ViewportWidget();
+        viewport->setBackground(ui::rgb(0x0f1117));
+        dock_->setCenter(std::unique_ptr<ui::Widget>(viewport));
+        dock_->addPanel("jerarquia", "Jerarquía", hierarchyPanel(), ui::DockSide::Left);
+        dock_->addPanel("archivos", "Archivos", filesPanel(), ui::DockSide::Left);
+        dock_->addPanel("inspector", "Inspector", inspectorPanel(), ui::DockSide::Right);
+        auto perf = std::make_unique<ui::Panel>();
+        perf->setPadding(ui::Edges::all(10.f));
+        perf->add<ui::Label>(std::string("60 FPS    171 MB en uso"));
+        dock_->addPanel("rendimiento", "Rendimiento", std::move(perf), ui::DockSide::Bottom);
+        dock_->setFractions(0.26f, 0.26f, 0.2f);
 
         auto* status = makePanel(page, theme.deep);
         status->setPadding(ui::Edges::symmetric(12.f, 3.f));
@@ -177,9 +231,9 @@ private:
 
     std::unique_ptr<ui::Context> context_;
     std::unique_ptr<ui::EngineHost> host_;
+    ui::DockSpace* dock_       = nullptr;
     ui::ProgressBar* progress_ = nullptr;
     float time_                = 0.f;
-    bool fixed_                = true;
 };
 
 }

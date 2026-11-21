@@ -249,8 +249,7 @@ Widget* Context::openPopup(std::unique_ptr<Widget> popup)
 
 void Context::closePopupWidget(Widget* popup)
 {
-    if (auto* menu = dynamic_cast<PopupMenu*>(popup))
-        menu->notifyClosed();
+    popup->onPopupClosed();
     if (auto removed = overlay_->removeChild(popup))
         graveyard_.push_back(std::move(removed));
 }
@@ -425,7 +424,7 @@ bool Context::mouseButton(events::MouseButton button, bool down, Vec2 position, 
         for (Widget* w = target; w; w = w->parent())
             if (w == overlay_.get())
                 inOverlay = true;
-        if (!inOverlay)
+        if (!inOverlay || focusTarget)
             setFocus(focusTarget);
 
         MouseEvent event;
@@ -493,10 +492,17 @@ bool Context::key(events::KeyCode code, bool down, bool repeat, Modifiers modifi
 
     if (Widget* popup = topPopup())
     {
-        if (down)
-            popup->onKeyDown(event);
-        collectGarbage();
-        return true;
+        bool focusInside = false;
+        for (Widget* w = focused_; w; w = w->parent())
+            if (w == popup)
+                focusInside = true;
+        if (!focusInside)
+        {
+            if (down)
+                popup->onKeyDown(event);
+            collectGarbage();
+            return true;
+        }
     }
 
     if (!focused_)
@@ -518,8 +524,15 @@ bool Context::key(events::KeyCode code, bool down, bool repeat, Modifiers modifi
 
 bool Context::text(char32_t codepoint)
 {
-    if (hasPopups())
-        return true;
+    if (Widget* popup = topPopup())
+    {
+        bool focusInside = false;
+        for (Widget* w = focused_; w; w = w->parent())
+            if (w == popup)
+                focusInside = true;
+        if (!focusInside)
+            return true;
+    }
     if (!focused_ || !focused_->enabledInTree())
         return false;
     const bool handled = focused_->onChar(codepoint);

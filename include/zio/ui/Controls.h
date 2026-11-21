@@ -20,14 +20,18 @@ public:
     const std::string& text() const { return text_; }
     void setColor(std::optional<Color> color) { color_ = color; }
     void setAlign(Align align) { align_ = align; }
+    void setBold(bool bold) { bold_ = bold; }
 
     Vec2 contentMinSize() const override;
     void draw(Painter& painter) override;
 
 private:
+    Font& activeFont() const;
+
     std::string text_;
     std::optional<Color> color_;
     Align align_ = Align::Start;
+    bool bold_   = false;
 };
 
 class ZIO_API Button : public Widget
@@ -99,11 +103,14 @@ public:
     void setReadOnly(bool readOnly) { readOnly_ = readOnly; }
     void setOnChanged(std::function<void(const std::string&)> callback) { onChanged_ = std::move(callback); }
     void setOnSubmit(std::function<void(const std::string&)> callback) { onSubmit_ = std::move(callback); }
+    void setOnFocusLost(std::function<void()> callback) { onFocusLost_ = std::move(callback); }
+    void setOnCancel(std::function<void()> callback) { onCancel_ = std::move(callback); }
 
     std::size_t caret() const { return caret_; }
     bool hasSelection() const { return caret_ != anchor_; }
     std::string selectedText() const;
     void selectAll();
+    void moveCaretToEnd();
 
     Vec2 contentMinSize() const override;
     void draw(Painter& painter) override;
@@ -137,6 +144,8 @@ private:
     double blinkBase_   = 0.0;
     std::function<void(const std::string&)> onChanged_;
     std::function<void(const std::string&)> onSubmit_;
+    std::function<void()> onFocusLost_;
+    std::function<void()> onCancel_;
 };
 
 class ZIO_API Separator final : public Widget

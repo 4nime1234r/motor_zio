@@ -12,6 +12,7 @@ namespace zio::ui
 struct Theme
 {
     std::shared_ptr<Font> font;
+    std::shared_ptr<Font> fontBold;
 
     Color page          = rgb(0x0f1117);
     Color panel         = rgb(0x15171f);

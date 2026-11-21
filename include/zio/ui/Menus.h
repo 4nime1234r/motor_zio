@@ -67,6 +67,7 @@ public:
     void setMinWidth(float width) { minWidth_ = width; }
     void setOnClose(std::function<void()> callback) { onClose_ = std::move(callback); }
     void notifyClosed();
+    void onPopupClosed() override { notifyClosed(); }
     int hoveredIndex() const { return hover_; }
     const std::vector<MenuItem>& items() const { return items_; }
     Rect itemRect(std::size_t index) const;

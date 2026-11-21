@@ -2,6 +2,7 @@ set(ZIO_TESTS
     Physics3DTest
     UITest
     DockTest
+    WidgetsTest
 )
 
 foreach(testName IN LISTS ZIO_TESTS)
