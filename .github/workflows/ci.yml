@@ -22,7 +22,7 @@ jobs:
 
       - name: Configurar
         shell: pwsh
-        run: cmake -S . -B build -A x64
+        run: cmake -S . -B build -A x64 -DZIO_EDITOR_UPDATER=ON
 
       - name: Compilar
         shell: pwsh

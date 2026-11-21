@@ -2,7 +2,7 @@
 
 Zio es un motor de juegos 2D y 3D escrito en C++20 para Windows. Renderiza con Vulkan e incluye un editor visual para montar escenas sin escribir código.
 
-Es un proyecto en desarrollo activo. La versión actual es la **0.1.0**.
+Es un proyecto en desarrollo activo. La versión actual es la **0.2.0**.
 
 ## Características
 
@@ -58,7 +58,18 @@ El editor vive en `tools/zio_editor` y está hecho con Dear ImGui.
 
 ## Descargar
 
-Cada versión se publica en la sección **Releases** del repositorio, con el editor ya compilado para Windows y el código fuente de esa versión. Para actualizar, descarga la última release y reemplaza tu copia.
+Cada versión se publica en la sección **Releases** del repositorio, con el editor ya compilado para Windows y el código fuente de esa versión.
+
+## Actualizaciones
+
+El editor se actualiza solo, igual que Zion:
+
+- Al abrirlo, y después cada 4 horas, comprueba si hay una versión nueva en las releases del repositorio.
+- Si la hay, aparece **Actualización disponible** en la barra superior. Pulsa **Descargar** y verás el progreso.
+- La descarga se verifica con su huella SHA-512 antes de aceptarse; si no coincide, se descarta.
+- Cuando termina, pulsa **Reiniciar y actualizar**. Si prefieres no hacerlo ahora, la actualización se instala sola al cerrar el editor.
+
+La carpeta donde esté `zio_editor.exe` debe permitir escribir. Si falla, el editor te lo indica y puedes reintentar o descargar la release a mano.
 
 ## Compilar desde el código
 

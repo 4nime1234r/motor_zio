@@ -33,7 +33,8 @@ constexpr std::uint32_t kInitialHeight = 900;
 constexpr float kSidePanelWidth    = 330.f;
 constexpr float kBottomPanelHeight = 250.f;
 
-constexpr ImVec4 kErrorColor = ImVec4(1.f, 0.4f, 0.4f, 1.f);
+constexpr ImVec4 kErrorColor  = ImVec4(1.f, 0.4f, 0.4f, 1.f);
+constexpr ImVec4 kUpdateColor = ImVec4(0.4f, 0.85f, 0.5f, 1.f);
 
 constexpr float kSnapStep       = 0.25f;
 constexpr float kFastMultiplier = 3.f;
@@ -161,6 +162,12 @@ void EditorApp::run()
     initInfo.CheckVkResultFn       = &checkVkResult;
     ImGui_ImplVulkan_Init(&initInfo);
 
+    if (Updater::enabled())
+    {
+        Updater::cleanupLeftovers();
+        updater_.start();
+    }
+
     auto lastFrameStart = std::chrono::steady_clock::now();
     float frameTimeMs    = 0.f;
 
@@ -208,6 +215,8 @@ void EditorApp::run()
         frameTimeMs          = std::chrono::duration<float, std::milli>(frameEnd - lastFrameStart).count();
         lastFrameStart        = frameEnd;
     }
+
+    updater_.finish(restartAfterClose_);
 }
 
 void EditorApp::renderScene()
@@ -673,7 +682,53 @@ void EditorApp::drawMenuBar()
             ImGui::SameLine();
             ImGui::TextColored(kErrorColor, "  %s", error.c_str());
         }
+        drawUpdateStatus();
         ImGui::EndMenuBar();
+    }
+}
+
+void EditorApp::drawUpdateStatus()
+{
+    if (!Updater::enabled())
+        return;
+
+    const UpdateStatus update = updater_.status();
+    switch (update.state)
+    {
+    case UpdateState::Available:
+        ImGui::SameLine();
+        ImGui::TextColored(kUpdateColor, "  Actualización disponible: v%s", update.version.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Descargar"))
+            updater_.download();
+        break;
+    case UpdateState::Downloading:
+    {
+        ImGui::SameLine();
+        char label[64];
+        std::snprintf(label, sizeof(label), "Descargando v%s", update.version.c_str());
+        ImGui::ProgressBar(update.progress, ImVec2(180.f, 0.f), label);
+        break;
+    }
+    case UpdateState::Downloaded:
+        ImGui::SameLine();
+        ImGui::TextColored(kUpdateColor, "  Zio v%s lista para instalar", update.version.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reiniciar y actualizar") && !context_.hasPending())
+        {
+            restartAfterClose_ = true;
+            context_.request(Action{ActionKind::CloseWindow, {}, {}});
+        }
+        break;
+    case UpdateState::Error:
+        ImGui::SameLine();
+        ImGui::TextColored(kErrorColor, "  %s", update.error.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reintentar"))
+            updater_.retry();
+        break;
+    default:
+        break;
     }
 }
 

@@ -35,6 +35,7 @@ add_executable(zio_editor
     src/panels/SceneHierarchyPanel.cpp
     src/panels/InspectorPanel.cpp
     src/panels/DiagnosticsPanel.cpp
+    src/update/Updater.cpp
 
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
@@ -51,6 +52,20 @@ target_include_directories(zio_editor PRIVATE
     ${ZIO_ROOT}/src
 )
 
-target_link_libraries(zio_editor PRIVATE zio::engine psapi)
+option(ZIO_EDITOR_UPDATER "Activa la actualizacion automatica del editor" OFF)
+
+file(STRINGS "${ZIO_ROOT}/CMakeLists.txt" zioVersionLine REGEX "^project\\(motor_zio VERSION")
+string(REGEX MATCH "VERSION ([0-9]+\\.[0-9]+\\.[0-9]+)" zioVersionMatch "${zioVersionLine}")
+set(ZIO_VERSION "${CMAKE_MATCH_1}")
+if(NOT ZIO_VERSION)
+    message(FATAL_ERROR "No se pudo leer la version de ${ZIO_ROOT}/CMakeLists.txt")
+endif()
+
+target_compile_definitions(zio_editor PRIVATE "ZIO_VERSION=\"${ZIO_VERSION}\"")
+if(ZIO_EDITOR_UPDATER)
+    target_compile_definitions(zio_editor PRIVATE ZIO_EDITOR_UPDATER=1)
+endif()
+
+target_link_libraries(zio_editor PRIVATE zio::engine psapi winhttp bcrypt)
 target_compile_options(zio_editor PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 zio_enable_optimizations(zio_editor)

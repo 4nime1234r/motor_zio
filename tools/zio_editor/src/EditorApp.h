@@ -14,6 +14,7 @@
 #include "panels/DiagnosticsPanel.h"
 #include "panels/InspectorPanel.h"
 #include "panels/SceneHierarchyPanel.h"
+#include "update/Updater.h"
 
 namespace zio_editor
 {
@@ -43,6 +44,7 @@ private:
 
     void drawUi(float frameTimeMs);
     void drawMenuBar();
+    void drawUpdateStatus();
     void drawProjectPopups();
     void drawSceneSavePopups();
     void saveCurrentScene();
@@ -88,6 +90,9 @@ private:
     InspectorPanel inspectorPanel_;
     ContentBrowserPanel contentBrowserPanel_;
     DiagnosticsPanel diagnosticsPanel_;
+
+    Updater updater_;
+    bool restartAfterClose_ = false;
 
     std::string imguiIniPath_;
     std::filesystem::path recentFile_;

@@ -75,7 +75,7 @@ jobs:
 
       - name: Configurar
         shell: pwsh
-        run: cmake -S . -B build -A x64
+        run: cmake -S . -B build -A x64 -DZIO_EDITOR_UPDATER=ON
 
       - name: Compilar
         shell: pwsh
@@ -90,11 +90,27 @@ jobs:
           Copy-Item LICENSE, README.md $nombre
           Compress-Archive -Path "$nombre/*" -DestinationPath "$nombre.zip"
 
+          $exe = "$nombre/zio_editor.exe"
+          $hex = (Get-FileHash $exe -Algorithm SHA512).Hash
+          $sha = [Convert]::ToBase64String([Convert]::FromHexString($hex))
+          $fecha = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+          $yml = @(
+            "version: ${{ needs.tag.outputs.version }}",
+            "files:",
+            "  - url: zio_editor.exe",
+            "    sha512: $sha",
+            "path: zio_editor.exe",
+            "sha512: $sha",
+            "releaseDate: '$fecha'"
+          ) -join "`n"
+          Set-Content -Path latest.yml -Value $yml -Encoding utf8NoBOM
+          Copy-Item $exe zio_editor.exe
+
       - name: Subir el paquete a la release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ needs.tag.outputs.tag }}" "Zio-${{ needs.tag.outputs.version }}-windows-x64.zip" --clobber
+        run: gh release upload "${{ needs.tag.outputs.tag }}" "Zio-${{ needs.tag.outputs.version }}-windows-x64.zip" zio_editor.exe latest.yml --clobber
 
   finalize:
     needs: [tag, build]
@@ -117,5 +133,13 @@ jobs:
           echo "Assets publicados en $TAG: $ASSETS"
           if ! echo "$ASSETS" | grep -q "windows-x64.zip"; then
             echo "::error::La release $TAG no tiene el paquete de Windows adjunto. Publicación incompleta, revisar manualmente en GitHub Releases."
+            exit 1
+          fi
+          if ! echo "$ASSETS" | grep -q "latest.yml"; then
+            echo "::error::La release $TAG no tiene latest.yml adjunto: el editor no podrá detectar esta versión. Publicación incompleta, revisar manualmente en GitHub Releases."
+            exit 1
+          fi
+          if ! echo "$ASSETS" | grep -q "zio_editor.exe"; then
+            echo "::error::La release $TAG no tiene zio_editor.exe adjunto: el editor no podrá descargar esta versión. Publicación incompleta, revisar manualmente en GitHub Releases."
             exit 1
           fi
