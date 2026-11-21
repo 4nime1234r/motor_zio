@@ -22,12 +22,15 @@ if(NOT DEFINED ENV{VULKAN_SDK} AND WIN32)
         endif()
     endforeach()
 endif()
-if(NOT DEFINED ENV{VULKAN_SDK})
+if(WIN32 AND NOT DEFINED ENV{VULKAN_SDK})
     message(FATAL_ERROR "Zio needs the Vulkan SDK: install it "
                         "(winget install KhronosGroup.VulkanSDK) or set VULKAN_SDK.")
 endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/zio_spirv.cmake)
 find_package(Vulkan REQUIRED)
+if(NOT Vulkan_GLSLC_EXECUTABLE)
+    find_program(Vulkan_GLSLC_EXECUTABLE glslc)
+endif()
 
 add_library(engine STATIC
     src/assets/Image.cpp

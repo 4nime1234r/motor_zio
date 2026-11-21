@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
 
 concurrency:
@@ -31,3 +31,21 @@ jobs:
       - name: Pruebas
         shell: pwsh
         run: ctest --test-dir build -C Release --output-on-failure
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar dependencias
+        run: sudo apt-get update && sudo apt-get install -y ninja-build g++ libvulkan-dev glslc
+
+      - name: Configurar
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DZIO_BUILD_TESTS=ON
+
+      - name: Compilar
+        run: cmake --build build --parallel
+
+      - name: Pruebas
+        run: ctest --test-dir build --output-on-failure
