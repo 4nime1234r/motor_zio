@@ -98,6 +98,18 @@ void writeNode(std::string& out, const Node3D& node, int level)
         out += ",\n";
         field(out, in, "castShadow");
         out += mesh->castShadow() ? "true" : "false";
+        if (mesh->isAnimationPlaying())
+        {
+            out += ",\n";
+            field(out, in, "animation");
+            writeString(out, mesh->currentAnimation());
+            out += ",\n";
+            field(out, in, "animationLoop");
+            out += mesh->animationLoops() ? "true" : "false";
+            out += ",\n";
+            field(out, in, "animationSpeed");
+            writeNumber(out, mesh->animationSpeed());
+        }
     }
 
     if (!node.children().empty())
@@ -299,6 +311,18 @@ struct Reader : json::Fields
                 return nullptr;
             if (has)
                 mesh->setCastShadow(cast);
+            std::string animation;
+            if (!getString(o, "animation", path, animation, has))
+                return nullptr;
+            if (has && !animation.empty())
+            {
+                bool loop = true;
+                double speed = 1.0;
+                if (!getBool(o, "animationLoop", path, loop, has) || !getNumber(o, "animationSpeed", path, speed, has))
+                    return nullptr;
+                mesh->setAnimationSpeed(static_cast<float>(speed));
+                mesh->playAnimation(animation, loop);
+            }
             out = std::move(mesh);
         }
         else

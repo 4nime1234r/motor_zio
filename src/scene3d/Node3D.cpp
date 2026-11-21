@@ -1,6 +1,7 @@
 #include "zio/scene3d/Node3D.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "zio/scene3d/Renderer3D.h"
 
@@ -73,6 +74,82 @@ void MeshNode::setTexturePath(std::string path)
     texturePath_ = std::move(path);
 }
 
+std::vector<std::string> MeshNode::animationNames() const
+{
+    std::vector<std::string> names;
+    if (mesh_ && mesh_->skin)
+        for (const AnimationClip& clip : mesh_->skin->clips)
+            names.push_back(clip.name);
+    return names;
+}
+
+bool MeshNode::playAnimation(const std::string& name, bool loop)
+{
+    if (!mesh_ || !mesh_->skin || !mesh_->skin->findClip(name))
+        return false;
+    animName_    = name;
+    animLoop_    = loop;
+    animTime_    = 0.f;
+    animPlaying_ = true;
+    pose();
+    return true;
+}
+
+void MeshNode::stopAnimation()
+{
+    animPlaying_ = false;
+    animName_.clear();
+    animTime_ = 0.f;
+    posed_.reset();
+}
+
+void MeshNode::setAnimationTime(float seconds)
+{
+    animTime_ = seconds < 0.f ? 0.f : seconds;
+    if (animPlaying_)
+        pose();
+}
+
+void MeshNode::update(float dt)
+{
+    if (!animPlaying_ || !mesh_ || !mesh_->skin)
+        return;
+    const AnimationClip* clip = mesh_->skin->findClip(animName_);
+    if (!clip)
+    {
+        animPlaying_ = false;
+        return;
+    }
+    animTime_ += dt * animSpeed_;
+    if (clip->duration > 0.f)
+    {
+        if (animLoop_)
+        {
+            animTime_ = std::fmod(animTime_, clip->duration);
+            if (animTime_ < 0.f)
+                animTime_ += clip->duration;
+        }
+        else if (animTime_ >= clip->duration)
+        {
+            animTime_    = clip->duration;
+            animPlaying_ = false;
+        }
+    }
+    pose();
+}
+
+void MeshNode::pose()
+{
+    if (!mesh_ || !mesh_->skin)
+        return;
+    const AnimationClip* clip = mesh_->skin->findClip(animName_);
+    std::vector<math::Mat4> matrices;
+    mesh_->skin->skinMatrices(clip, animTime_, matrices);
+    if (!posed_)
+        posed_ = std::make_shared<Mesh>();
+    mesh_->skin->apply(*mesh_, matrices, *posed_);
+}
+
 void MeshNode::onDraw(Renderer3D& renderer)
 {
     if (!mesh_)
@@ -82,7 +159,7 @@ void MeshNode::onDraw(Renderer3D& renderer)
     style.texture     = texture_ ? texture_->handle : render::kInvalidHandle;
     style.uvScale     = uvScale_;
     style.castShadow  = castShadow_;
-    renderer.drawMesh(*mesh_, worldMatrix(), style);
+    renderer.drawMesh(posed_ ? *posed_ : *mesh_, worldMatrix(), style);
 }
 
 }

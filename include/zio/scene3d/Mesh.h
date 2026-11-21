@@ -7,6 +7,7 @@
 
 #include "zio/core/Platform.h"
 #include "zio/math/Vec3.h"
+#include "zio/scene3d/Skeleton.h"
 
 namespace zio::scene3d
 {
@@ -25,6 +26,7 @@ public:
     std::vector<Vertex3D> vertices;
     float baseColor[4] = {1.f, 1.f, 1.f, 1.f};
     std::string texturePath;
+    std::shared_ptr<Skin> skin;
 
     static std::shared_ptr<Mesh> cube(float size = 1.f);
 

@@ -6,9 +6,11 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 
 #include "internal/Json.h"
 #include "zio/math/Mat4.h"
+#include "zio/scene3d/Skeleton.h"
 
 namespace fs = std::filesystem;
 
@@ -29,6 +31,12 @@ struct Loader
     std::vector<std::vector<std::uint8_t>> buffers;
     std::shared_ptr<Mesh> mesh = std::make_shared<Mesh>();
     bool materialTaken         = false;
+    std::vector<long> parentOf;
+    std::shared_ptr<Skin> skin;
+    long activeSkin  = -1;
+    long currentSkin = -1;
+    std::map<long, int> nodeToJoint;
+    std::vector<VertexSkin> skinVerts;
 
     bool fail(const std::string& msg)
     {
@@ -207,7 +215,7 @@ struct Loader
         const auto* ts = t ? std::get_if<std::string>(&t->v) : nullptr;
         if (!ts)
             return fail("accessor without type");
-        out.components = *ts == "SCALAR" ? 1 : *ts == "VEC2" ? 2 : *ts == "VEC3" ? 3 : *ts == "VEC4" ? 4 : 0;
+        out.components = *ts == "SCALAR" ? 1 : *ts == "VEC2" ? 2 : *ts == "VEC3" ? 3 : *ts == "VEC4" ? 4 : *ts == "MAT4" ? 16 : 0;
         if (out.components == 0)
             return fail("unsupported accessor type \"" + *ts + "\"");
 
@@ -330,8 +338,169 @@ struct Loader
                 (fs::u8path(path).parent_path() / fs::u8path(decodeUri(*text))).generic_string();
     }
 
-    bool primitive(const Value& prim, const math::Mat4& world)
+    math::Mat4 nodeLocal(long nodeIndex) const
     {
+        const Value* n = at("nodes", nodeIndex);
+        return n ? localMatrix(*n) : math::Mat4{};
+    }
+
+    math::Mat4 ancestorWorld(long nodeIndex) const
+    {
+        math::Mat4 result;
+        long p = nodeIndex < 0 || static_cast<std::size_t>(nodeIndex) >= parentOf.size()
+                     ? -1
+                     : parentOf[static_cast<std::size_t>(nodeIndex)];
+        for (int guard = 0; p >= 0 && guard < 256; ++guard)
+        {
+            result = nodeLocal(p) * result;
+            p      = static_cast<std::size_t>(p) < parentOf.size() ? parentOf[static_cast<std::size_t>(p)] : -1;
+        }
+        return result;
+    }
+
+    bool buildSkin(long skinIndex)
+    {
+        const Value* s = at("skins", skinIndex);
+        if (!s)
+            return fail("missing skin");
+        const Array* joints = array(*s, "joints");
+        if (!joints || joints->empty())
+            return fail("skin without joints");
+        skin = std::make_shared<Skin>();
+        for (std::size_t i = 0; i < joints->size(); ++i)
+            nodeToJoint[static_cast<long>(number(&(*joints)[i], -1))] = static_cast<int>(i);
+
+        std::vector<math::Mat4> inverse(joints->size());
+        if (const Value* ibm = s->find("inverseBindMatrices"))
+        {
+            Accessor a;
+            if (!accessor(static_cast<long>(number(ibm, -1)), a))
+                return false;
+            if (a.components != 16 || a.type != 5126 || a.count < joints->size())
+                return fail("bad inverseBindMatrices");
+            for (std::size_t j = 0; j < joints->size(); ++j)
+                for (std::size_t k = 0; k < 16; ++k)
+                    inverse[j].m[k % 4][k / 4] = component(a, j, k);
+        }
+
+        for (std::size_t i = 0; i < joints->size(); ++i)
+        {
+            const long nodeIndex = static_cast<long>(number(&(*joints)[i], -1));
+            const Value* node    = at("nodes", nodeIndex);
+            if (!node)
+                return fail("skin refers to a missing node");
+            SkinJoint joint;
+            if (const Value* nm = node->find("name"))
+                if (const auto* str = std::get_if<std::string>(&nm->v))
+                    joint.name = *str;
+            float tv[3] = {0, 0, 0}, sv[3] = {1, 1, 1}, qv[4] = {0, 0, 0, 1};
+            const auto vec = [&](const char* key, std::size_t n, float* out) {
+                if (const Value* v = node->find(key))
+                    if (const auto* arr = std::get_if<Array>(&v->v); arr && arr->size() == n)
+                        for (std::size_t k = 0; k < n; ++k)
+                            out[k] = static_cast<float>(number(&(*arr)[k], out[k]));
+            };
+            vec("translation", 3, tv);
+            vec("scale", 3, sv);
+            vec("rotation", 4, qv);
+            joint.translation = {tv[0], tv[1], tv[2]};
+            joint.scale       = {sv[0], sv[1], sv[2]};
+            joint.rotation    = math::Quaternion{qv[0], qv[1], qv[2], qv[3]}.normalized();
+            joint.inverseBind = inverse[i];
+
+            const long parent = static_cast<std::size_t>(nodeIndex) < parentOf.size()
+                                    ? parentOf[static_cast<std::size_t>(nodeIndex)]
+                                    : -1;
+            const auto it = nodeToJoint.find(parent);
+            if (it != nodeToJoint.end())
+                joint.parent = it->second;
+            else
+                joint.parentTransform = ancestorWorld(nodeIndex);
+            skin->joints.push_back(std::move(joint));
+        }
+        return true;
+    }
+
+    bool loadAnimations()
+    {
+        const Array* list = array(root, "animations");
+        if (!list || !skin)
+            return true;
+        for (std::size_t ai = 0; ai < list->size(); ++ai)
+        {
+            const Value& anim = (*list)[ai];
+            AnimationClip clip;
+            clip.name = "animacion_" + std::to_string(ai);
+            if (const Value* nm = anim.find("name"))
+                if (const auto* str = std::get_if<std::string>(&nm->v); str && !str->empty())
+                    clip.name = *str;
+            const Array* samplers = array(anim, "samplers");
+            const Array* channels = array(anim, "channels");
+            if (!samplers || !channels)
+                continue;
+            for (const Value& ch : *channels)
+            {
+                const Value* target = ch.find("target");
+                if (!target)
+                    continue;
+                const auto it = nodeToJoint.find(static_cast<long>(number(target->find("node"), -1)));
+                if (it == nodeToJoint.end())
+                    continue;
+                const Value* pathValue = target->find("path");
+                const auto* pathText   = pathValue ? std::get_if<std::string>(&pathValue->v) : nullptr;
+                if (!pathText)
+                    continue;
+                AnimationChannel c;
+                c.joint = it->second;
+                if (*pathText == "translation")
+                    c.path = AnimationPath::Translation;
+                else if (*pathText == "rotation")
+                    c.path = AnimationPath::Rotation;
+                else if (*pathText == "scale")
+                    c.path = AnimationPath::Scale;
+                else
+                    continue;
+
+                const long samplerIndex = static_cast<long>(number(ch.find("sampler"), -1));
+                if (samplerIndex < 0 || static_cast<std::size_t>(samplerIndex) >= samplers->size())
+                    continue;
+                const Value& sampler = (*samplers)[static_cast<std::size_t>(samplerIndex)];
+                std::string interpolation = "LINEAR";
+                if (const Value* iv = sampler.find("interpolation"))
+                    if (const auto* str = std::get_if<std::string>(&iv->v))
+                        interpolation = *str;
+                c.step = interpolation == "STEP";
+
+                Accessor input, output;
+                if (!accessor(static_cast<long>(number(sampler.find("input"), -1)), input) ||
+                    !accessor(static_cast<long>(number(sampler.find("output"), -1)), output))
+                    return false;
+                const std::size_t width = c.path == AnimationPath::Rotation ? 4 : 3;
+                if (input.components != 1 || output.components != width)
+                    continue;
+                const bool cubic = interpolation == "CUBICSPLINE";
+                if (output.count < input.count * (cubic ? 3 : 1))
+                    continue;
+                for (std::size_t k = 0; k < input.count; ++k)
+                {
+                    c.times.push_back(component(input, k, 0));
+                    const std::size_t row = cubic ? k * 3 + 1 : k;
+                    for (std::size_t w = 0; w < width; ++w)
+                        c.values.push_back(component(output, row, w));
+                }
+                if (!c.times.empty())
+                    clip.duration = (std::max)(clip.duration, c.times.back());
+                clip.channels.push_back(std::move(c));
+            }
+            if (!clip.channels.empty())
+                skin->clips.push_back(std::move(clip));
+        }
+        return true;
+    }
+
+    bool primitive(const Value& prim, const math::Mat4& worldMatrix)
+    {
+        math::Mat4 world = worldMatrix;
         const long mode = static_cast<long>(number(prim.find("mode"), 4));
         if (mode != 4 && mode != 5 && mode != 6)
             return true;
@@ -358,6 +527,33 @@ struct Loader
             if (!accessor(static_cast<long>(number(t, -1)), uv))
                 return false;
             hasUv = uv.components == 2 && uv.count == pos.count;
+        }
+
+        Accessor jointsAccessor, weightsAccessor;
+        bool skinned = false;
+        if (currentSkin >= 0 && (activeSkin < 0 || activeSkin == currentSkin))
+        {
+            const Value* jv = attrs->find("JOINTS_0");
+            const Value* wv = attrs->find("WEIGHTS_0");
+            if (jv && wv)
+            {
+                if (!accessor(static_cast<long>(number(jv, -1)), jointsAccessor) ||
+                    !accessor(static_cast<long>(number(wv, -1)), weightsAccessor))
+                    return false;
+                skinned = jointsAccessor.components == 4 && weightsAccessor.components == 4 &&
+                          jointsAccessor.count == pos.count && weightsAccessor.count == pos.count;
+            }
+        }
+        if (skinned)
+        {
+            if (activeSkin < 0)
+            {
+                activeSkin = currentSkin;
+                if (!buildSkin(currentSkin))
+                    return false;
+                skinVerts.resize(mesh->vertices.size());
+            }
+            world = math::Mat4{};
         }
 
         std::vector<std::uint32_t> indices;
@@ -423,6 +619,19 @@ struct Loader
                 const float u = hasUv ? component(uv, i, 0) : 0.f;
                 const float v = hasUv ? component(uv, i, 1) : 0.f;
                 mesh->vertices.push_back({p[k], n, u, v});
+                if (activeSkin >= 0)
+                {
+                    VertexSkin vs;
+                    if (skinned)
+                    {
+                        for (std::size_t w = 0; w < 4; ++w)
+                        {
+                            vs.joints[w]  = static_cast<std::uint16_t>(component(jointsAccessor, i, w));
+                            vs.weights[w] = component(weightsAccessor, i, w);
+                        }
+                    }
+                    skinVerts.push_back(vs);
+                }
             }
         }
         takeMaterial(static_cast<long>(number(prim.find("material"), -1)));
@@ -462,6 +671,7 @@ struct Loader
         if (!node)
             return fail("missing node");
         const math::Mat4 world = parent * localMatrix(*node);
+        currentSkin            = static_cast<long>(number(node->find("skin"), -1));
         if (const Value* mi = node->find("mesh"))
             if (const Value* m = at("meshes", static_cast<long>(number(mi, -1))))
                 if (const Array* prims = array(*m, "primitives"))
@@ -517,6 +727,19 @@ struct Loader
         if (!loadBuffers(glbBin))
             return false;
 
+        if (const Array* all = array(root, "nodes"))
+        {
+            parentOf.assign(all->size(), -1);
+            for (std::size_t i = 0; i < all->size(); ++i)
+                if (const Array* kids = array((*all)[i], "children"))
+                    for (const Value& k : *kids)
+                    {
+                        const long child = static_cast<long>(number(&k, -1));
+                        if (child >= 0 && static_cast<std::size_t>(child) < parentOf.size())
+                            parentOf[static_cast<std::size_t>(child)] = static_cast<long>(i);
+                    }
+        }
+
         const math::Mat4 identity;
         const Array* scenes = array(root, "scenes");
         if (scenes && !scenes->empty())
@@ -537,6 +760,14 @@ struct Loader
         }
         if (mesh->vertices.empty())
             return fail("has no triangles");
+        if (skin)
+        {
+            skinVerts.resize(mesh->vertices.size());
+            skin->vertices = std::move(skinVerts);
+            if (!loadAnimations())
+                return false;
+            mesh->skin = skin;
+        }
         return true;
     }
 };

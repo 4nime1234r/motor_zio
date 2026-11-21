@@ -109,6 +109,20 @@ public:
     void setCastShadow(bool cast) { castShadow_ = cast; }
     bool castShadow() const { return castShadow_; }
 
+    bool hasSkeleton() const { return mesh_ && mesh_->skin; }
+    std::vector<std::string> animationNames() const;
+    bool playAnimation(const std::string& name, bool loop = true);
+    void stopAnimation();
+    bool isAnimationPlaying() const { return animPlaying_; }
+    const std::string& currentAnimation() const { return animName_; }
+    bool animationLoops() const { return animLoop_; }
+    void setAnimationSpeed(float speed) { animSpeed_ = speed; }
+    float animationSpeed() const { return animSpeed_; }
+    void setAnimationTime(float seconds);
+    float animationTime() const { return animTime_; }
+
+    void update(float dt) override;
+
 protected:
     void onDraw(Renderer3D& renderer) override;
 
@@ -120,6 +134,15 @@ private:
     std::shared_ptr<renderer::Texture> texture_;
     math::Vec2 uvScale_ = math::Vec2::one();
     bool castShadow_    = true;
+
+    void pose();
+
+    std::shared_ptr<Mesh> posed_;
+    std::string animName_;
+    float animTime_    = 0.f;
+    float animSpeed_   = 1.f;
+    bool animPlaying_  = false;
+    bool animLoop_     = true;
 };
 
 }
