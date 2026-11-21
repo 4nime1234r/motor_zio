@@ -1,0 +1,8 @@
+function(zio_set_gui_app TARGET)
+    if(WIN32)
+        set_target_properties(${TARGET} PROPERTIES WIN32_EXECUTABLE TRUE)
+        if(MSVC)
+            target_link_options(${TARGET} PRIVATE "/ENTRY:mainCRTStartup")
+        endif()
+    endif()
+endfunction()

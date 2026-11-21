@@ -12,5 +12,6 @@ endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../.. engine)
 
 add_executable(PruebaEscena main.cpp)
+zio_set_gui_app(PruebaEscena)
 target_link_libraries(PruebaEscena PRIVATE zio::engine)
 zio_enable_optimizations(PruebaEscena)

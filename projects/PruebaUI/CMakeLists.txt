@@ -12,6 +12,7 @@ endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../.. engine)
 
 add_executable(PruebaUI main.cpp)
+zio_set_gui_app(PruebaUI)
 target_link_libraries(PruebaUI PRIVATE zio::engine)
 target_compile_options(PruebaUI PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 zio_enable_optimizations(PruebaUI)

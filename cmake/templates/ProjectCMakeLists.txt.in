@@ -11,7 +11,9 @@ endif()
 
 find_package(zio CONFIG REQUIRED PATHS "${CMAKE_CURRENT_SOURCE_DIR}/../../sdk" NO_DEFAULT_PATH)
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../sdk/lib/cmake/zio/zio_optimizations.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../sdk/lib/cmake/zio/zio_gui.cmake")
 
 add_executable(__PROJECT_NAME__ main.cpp)
+zio_set_gui_app(__PROJECT_NAME__)
 target_link_libraries(__PROJECT_NAME__ PRIVATE zio::engine)
 zio_enable_optimizations(__PROJECT_NAME__)

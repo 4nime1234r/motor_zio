@@ -10,6 +10,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/zio_optimizations.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/zio_gui.cmake)
 
 if(NOT DEFINED ENV{VULKAN_SDK} AND WIN32)
     file(GLOB zioVulkanSdks LIST_DIRECTORIES true "C:/VulkanSDK/*")
@@ -185,5 +186,6 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/zioConfig.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/zioConfigVersion.cmake
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/zio_optimizations.cmake
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/zio_gui.cmake
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/zio
 )
