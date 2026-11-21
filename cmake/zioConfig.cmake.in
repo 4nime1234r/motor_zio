@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+find_dependency(Vulkan)
+
+include("${CMAKE_CURRENT_LIST_DIR}/zioTargets.cmake")
+
+check_required_components(zio)

@@ -1,0 +1,9 @@
+build/
+build-vk/
+sdk/
+sdk-vk/
+out/
+.cache/
+.vs/
+zio_prefs.dat
+imgui.ini

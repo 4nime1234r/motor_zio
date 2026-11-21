@@ -1,0 +1,67 @@
+Zio - Licencia Propietaria
+
+Copyright (c) 2026 4nime1234r. Todos los derechos reservados.
+
+Esta licencia se aplica al motor Zio y al editor Zio, es decir, a todos los
+archivos de este repositorio excepto el contenido del directorio "third_party",
+que se distribuye bajo sus propias licencias (consulta
+third_party/imgui/LICENSE.txt).
+
+1. Propiedad
+   El Software es y seguirá siendo propiedad exclusiva del Autor. Nada de esta
+   licencia te transfiere la propiedad ni ningún derecho de propiedad
+   intelectual.
+
+2. Uso permitido
+   Puedes descargar, compilar y ejecutar el Software, y usarlo para crear tus
+   propios juegos y aplicaciones ("Tus Obras"). Tus Obras son tuyas. Puedes
+   distribuir Tus Obras, incluida la forma compilada del Software que quede
+   enlazada en ellas, sin pagar regalías.
+
+3. Restricciones
+   Sin el permiso previo y por escrito del Autor, no puedes:
+   a. copiar, modificar, adaptar, traducir ni crear obras derivadas del
+      Software o de su código fuente, salvo lo estrictamente necesario para
+      compilarlo y usarlo como se describe en la sección 2;
+   b. redistribuir, publicar, sublicenciar, vender, alquilar ni prestar el
+      Software o su código fuente, total o parcialmente, en forma de código o
+      de binario, salvo como parte de Tus Obras en forma compilada;
+   c. ofrecer el Software, ni un motor o editor sustancialmente similar derivado
+      de él, como producto o servicio a terceros;
+   d. eliminar o alterar cualquier aviso de copyright, de licencia o de
+      atribución;
+   e. usar el Software, su código fuente o su nombre para entrenar, ajustar o
+      evaluar modelos de aprendizaje automático;
+   f. usar el nombre "Zio" o el nombre del Autor para respaldar o promocionar
+      productos sin permiso.
+
+4. Versiones y actualizaciones
+   Las versiones oficiales las publica únicamente el Autor en el repositorio
+   oficial. Cada versión se licencia bajo los términos de la licencia incluida
+   en esa versión. Usar una versión más reciente no concede derechos
+   adicionales.
+
+5. Componentes de terceros
+   El Software incluye componentes de terceros con sus propias licencias,
+   indicados en el directorio "third_party". Esas licencias se aplican solo a
+   esos componentes.
+
+6. Terminación
+   Esta licencia termina automáticamente si incumples cualquiera de sus
+   términos. Al terminar, debes dejar de usar el Software y eliminar todas las
+   copias.
+
+7. Sin garantía
+   EL SOFTWARE SE PROPORCIONA "TAL CUAL", SIN GARANTÍA DE NINGÚN TIPO, EXPRESA
+   O IMPLÍCITA, INCLUIDAS, ENTRE OTRAS, LAS GARANTÍAS DE COMERCIABILIDAD,
+   IDONEIDAD PARA UN FIN PARTICULAR Y NO INFRACCIÓN.
+
+8. Limitación de responsabilidad
+   EN NINGÚN CASO EL AUTOR SERÁ RESPONSABLE DE NINGUNA RECLAMACIÓN, DAÑO U
+   OTRA RESPONSABILIDAD, YA SEA EN UNA ACCIÓN CONTRACTUAL, EXTRACONTRACTUAL O DE
+   OTRO TIPO, DERIVADA DEL SOFTWARE, DE SU USO O DE OTRAS OPERACIONES CON EL
+   SOFTWARE.
+
+9. Contacto
+   Para permisos que vayan más allá de esta licencia, contacta con el Autor a
+   través de su perfil de GitHub: https://github.com/4nime1234r.
