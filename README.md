@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon/zio.png" alt="Zio" width="128">
+</p>
+
 # Zio
 
 Zio es un motor de juegos 2D y 3D escrito en C++20 para Windows. Renderiza con Vulkan e incluye un editor visual para montar escenas sin escribir código.

@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "platform/WindowIcon.h"
 #include "zio/events/EventBus.h"
 #include "zio/events/Types.h"
 
@@ -313,6 +314,7 @@ struct Window::Impl
             wc.lpfnWndProc   = &Impl::wndProc;
             wc.hInstance     = GetModuleHandleW(nullptr);
             wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
+            loadWindowIcons(wc.hInstance, wc.hIcon, wc.hIconSm);
             wc.lpszClassName = kClassName;
             if (!RegisterClassExW(&wc))
                 return false;

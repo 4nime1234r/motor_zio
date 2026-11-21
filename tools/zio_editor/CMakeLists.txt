@@ -18,7 +18,10 @@ set(IMGUI_DIR "${ZIO_ROOT}/third_party/imgui")
 
 set(IMGUI_RENDERER_BACKEND ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp)
 
+enable_language(RC)
+
 add_executable(zio_editor
+    zio_editor.rc
     src/main.cpp
     src/EditorWindow.cpp
     src/EditorApp.cpp

@@ -15,6 +15,7 @@
 #include <string>
 
 #include "imgui_impl_win32.h"
+#include "platform/WindowIcon.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -85,6 +86,7 @@ bool EditorWindow::create(std::string_view title, std::uint32_t width, std::uint
         wc.lpfnWndProc   = &Impl::wndProc;
         wc.hInstance     = GetModuleHandleW(nullptr);
         wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
+        zio::platform::loadWindowIcons(wc.hInstance, wc.hIcon, wc.hIconSm);
         wc.lpszClassName = kClassName;
         if (!RegisterClassExW(&wc))
             return false;
