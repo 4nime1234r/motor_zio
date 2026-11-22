@@ -1,7 +1,11 @@
 #include "EditorApp.h"
+#include "PlayerApp.h"
 
 int main(int argc, char** argv)
 {
+    if (const auto launch = zio_player::detectLaunch(argc, argv))
+        return zio_player::run(*launch);
+
     zio_editor::EditorApp app;
     if (argc > 1)
         app.setStartupProject(argv[1]);

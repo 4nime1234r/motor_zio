@@ -24,6 +24,8 @@ add_executable(zio_editor
     src/core/EditorContext.cpp
     src/core/Gizmo.cpp
     src/core/AssetFiles.cpp
+    src/core/GameExport.cpp
+    ../zio_player/PlayerApp.cpp
     src/core/RecentProject.cpp
     src/core/Picking.cpp
     src/core/SelectionGizmo.cpp
@@ -40,6 +42,7 @@ add_executable(zio_editor
 
 target_include_directories(zio_editor PRIVATE
     src
+    ../zio_player
     ${ZIO_ROOT}/src
 )
 
@@ -58,6 +61,11 @@ if(ZIO_EDITOR_UPDATER)
 endif()
 
 target_link_libraries(zio_editor PRIVATE zio::engine psapi winhttp bcrypt)
+if(MSVC)
+    target_compile_definitions(zio_editor PRIVATE ZIO_SHARED_LIB ZIO_EXPORTS)
+    set_target_properties(zio_editor PROPERTIES ENABLE_EXPORTS ON)
+    target_link_options(zio_editor PRIVATE "/WHOLEARCHIVE:$<TARGET_FILE:engine>")
+endif()
 target_compile_options(zio_editor PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 zio_enable_optimizations(zio_editor)
 zio_set_gui_app(zio_editor)

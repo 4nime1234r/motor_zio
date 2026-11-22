@@ -2,13 +2,17 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <mutex>
 
 #include "scripting/EmbeddedBridge.h"
+#include "zio/audio/AudioManager.h"
+#include "zio/audio/ClipCache.h"
 #include "zio/input/InputManager.h"
 #include "zio/math/Vec2.h"
+#include "zio/physics3d/World3D.h"
 #include "zio/scene3d/Node3D.h"
 #include "zio/scripting/Script.h"
 
@@ -19,6 +23,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shellapi.h>
 
 namespace fs = std::filesystem;
 
@@ -57,6 +62,37 @@ struct NativeApi
     int(__cdecl* isKeyDown)(int);
     int(__cdecl* isMouseDown)(int);
     void(__cdecl* getMousePosition)(float*);
+    void*(__cdecl* createNode)(void*, int, const char*, int);
+    void(__cdecl* destroyNode)(void*);
+    void*(__cdecl* findChild)(void*, const char*, int);
+    void*(__cdecl* getParent)(void*);
+    int(__cdecl* getChildCount)(void*);
+    void*(__cdecl* getChild)(void*, int);
+    void(__cdecl* setVisible)(void*, int);
+    int(__cdecl* isVisible)(void*);
+    void(__cdecl* setName)(void*, const char*, int);
+    int(__cdecl* setMesh)(void*, const char*, int);
+    void(__cdecl* setColor)(void*, const float*);
+    void(__cdecl* setTexture)(void*, const char*, int);
+    void(__cdecl* setLight)(void*, float, float);
+    unsigned(__cdecl* createBody)(int, int, const float*, const float*, float, float, float);
+    void(__cdecl* destroyBody)(unsigned);
+    int(__cdecl* hasBody)(unsigned);
+    void(__cdecl* getBodyVector)(unsigned, int, float*);
+    void(__cdecl* setBodyVector)(unsigned, int, const float*);
+    void(__cdecl* applyBody)(unsigned, int, const float*);
+    void(__cdecl* getGravity)(float*);
+    void(__cdecl* setGravity)(const float*);
+    int(__cdecl* raycast)(const float*, const float*, float, float*, unsigned*);
+    int(__cdecl* contactCount)();
+    int(__cdecl* getContact)(int, unsigned*, unsigned*, float*);
+    unsigned(__cdecl* playSound)(const char*, int, float, float, int, int);
+    void(__cdecl* stopSound)(unsigned);
+    void(__cdecl* setSound)(unsigned, int, float);
+    int(__cdecl* isSoundPlaying)(unsigned);
+    void(__cdecl* setCategoryVolume)(int, float);
+    void(__cdecl* loadScene)(const char*, int);
+    void*(__cdecl* instantiate)(void*, const char*, int);
 };
 
 scene3d::Node3D* asNode(void* node)
@@ -141,6 +177,321 @@ void __cdecl apiGetMousePosition(float* out)
     const math::Vec2 p = input::InputManager::instance().mousePosition();
     out[0] = p.x;
     out[1] = p.y;
+}
+
+std::mutex gSceneMutex;
+std::string gSceneRequest;
+
+std::string text(const char* data, int length)
+{
+    return data && length > 0 ? std::string(data, static_cast<std::size_t>(length)) : std::string();
+}
+
+void* __cdecl apiCreateNode(void* parent, int type, const char* name, int length)
+{
+    if (!parent)
+        return nullptr;
+    std::unique_ptr<scene3d::Node3D> node;
+    switch (type)
+    {
+    case 1:
+        node = std::make_unique<scene3d::MeshNode>();
+        break;
+    case 2:
+        node = std::make_unique<scene3d::LightNode>();
+        break;
+    default:
+        node = std::make_unique<scene3d::Node3D>();
+        break;
+    }
+    node->setName(text(name, length));
+    return asNode(parent)->addChild(std::move(node));
+}
+
+void __cdecl apiDestroyNode(void* node)
+{
+    if (node)
+        asNode(node)->markForDestroy();
+}
+
+scene3d::Node3D* searchChild(scene3d::Node3D* node, const std::string& name)
+{
+    for (const auto& child : node->children())
+    {
+        if (child->destroyPending())
+            continue;
+        if (child->name() == name)
+            return child.get();
+        if (auto* found = searchChild(child.get(), name))
+            return found;
+    }
+    return nullptr;
+}
+
+void* __cdecl apiFindChild(void* node, const char* name, int length)
+{
+    return node ? searchChild(asNode(node), text(name, length)) : nullptr;
+}
+
+void* __cdecl apiGetParent(void* node)
+{
+    return node ? asNode(node)->parent() : nullptr;
+}
+
+int __cdecl apiGetChildCount(void* node)
+{
+    return node ? static_cast<int>(asNode(node)->children().size()) : 0;
+}
+
+void* __cdecl apiGetChild(void* node, int index)
+{
+    if (!node || index < 0 || static_cast<std::size_t>(index) >= asNode(node)->children().size())
+        return nullptr;
+    return asNode(node)->children()[static_cast<std::size_t>(index)].get();
+}
+
+void __cdecl apiSetVisible(void* node, int visible)
+{
+    if (node)
+        asNode(node)->setVisible(visible != 0);
+}
+
+int __cdecl apiIsVisible(void* node)
+{
+    return node && asNode(node)->isVisible() ? 1 : 0;
+}
+
+void __cdecl apiSetName(void* node, const char* name, int length)
+{
+    if (node)
+        asNode(node)->setName(text(name, length));
+}
+
+int __cdecl apiSetMesh(void* node, const char* source, int length)
+{
+    auto* mesh = node ? dynamic_cast<scene3d::MeshNode*>(asNode(node)) : nullptr;
+    return mesh && mesh->setMeshSource(text(source, length)) ? 1 : 0;
+}
+
+void __cdecl apiSetColor(void* node, const float* rgba)
+{
+    if (!node)
+        return;
+    const renderer::Color color{rgba[0], rgba[1], rgba[2], rgba[3]};
+    if (auto* mesh = dynamic_cast<scene3d::MeshNode*>(asNode(node)))
+        mesh->setColor(color);
+    else if (auto* light = dynamic_cast<scene3d::LightNode*>(asNode(node)))
+        light->setColor(color);
+}
+
+void __cdecl apiSetTexture(void* node, const char* path, int length)
+{
+    if (auto* mesh = node ? dynamic_cast<scene3d::MeshNode*>(asNode(node)) : nullptr)
+        mesh->setTexturePath(text(path, length));
+}
+
+void __cdecl apiSetLight(void* node, float intensity, float range)
+{
+    if (auto* light = node ? dynamic_cast<scene3d::LightNode*>(asNode(node)) : nullptr)
+    {
+        light->setIntensity(intensity);
+        light->setRange(range);
+    }
+}
+
+math::Vec3 vec3(const float* v)
+{
+    return {v[0], v[1], v[2]};
+}
+
+unsigned __cdecl apiCreateBody(int type, int shape, const float* shapeParams, const float* position, float mass,
+                               float restitution, float friction)
+{
+    physics3d::BodyDesc desc;
+    desc.type = type == 0 ? physics3d::BodyType::Static
+                : type == 2 ? physics3d::BodyType::Kinematic
+                            : physics3d::BodyType::Dynamic;
+    desc.position    = vec3(position);
+    desc.mass        = mass;
+    desc.restitution = restitution;
+    desc.friction    = friction;
+    if (shape == 1)
+        desc.shape = physics3d::BoxShape{vec3(shapeParams)};
+    else
+        desc.shape = physics3d::SphereShape{shapeParams[0]};
+    return physics3d::World3D::instance().createBody(desc);
+}
+
+void __cdecl apiDestroyBody(unsigned body)
+{
+    physics3d::World3D::instance().destroyBody(body);
+}
+
+int __cdecl apiHasBody(unsigned body)
+{
+    return physics3d::World3D::instance().hasBody(body) ? 1 : 0;
+}
+
+void __cdecl apiGetBodyVector(unsigned body, int what, float* out)
+{
+    auto& world = physics3d::World3D::instance();
+    if (what == 2)
+    {
+        const math::Quaternion q = world.rotation(body);
+        out[0] = q.x;
+        out[1] = q.y;
+        out[2] = q.z;
+        out[3] = q.w;
+        return;
+    }
+    const math::Vec3 v = what == 0 ? world.position(body) : what == 1 ? world.linearVelocity(body) : world.angularVelocity(body);
+    out[0] = v.x;
+    out[1] = v.y;
+    out[2] = v.z;
+}
+
+void __cdecl apiSetBodyVector(unsigned body, int what, const float* in)
+{
+    auto& world = physics3d::World3D::instance();
+    switch (what)
+    {
+    case 0:
+        world.setPosition(body, vec3(in));
+        break;
+    case 1:
+        world.setLinearVelocity(body, vec3(in));
+        break;
+    case 2:
+        world.setRotation(body, math::Quaternion{in[0], in[1], in[2], in[3]});
+        break;
+    default:
+        world.setAngularVelocity(body, vec3(in));
+        break;
+    }
+}
+
+void __cdecl apiApplyBody(unsigned body, int what, const float* in)
+{
+    auto& world = physics3d::World3D::instance();
+    if (what == 0)
+        world.applyImpulse(body, vec3(in));
+    else if (what == 1)
+        world.applyForce(body, vec3(in));
+    else
+        world.applyTorque(body, vec3(in));
+}
+
+void __cdecl apiGetGravity(float* out)
+{
+    const math::Vec3 g = physics3d::World3D::instance().gravity();
+    out[0] = g.x;
+    out[1] = g.y;
+    out[2] = g.z;
+}
+
+void __cdecl apiSetGravity(const float* in)
+{
+    physics3d::World3D::instance().setGravity(vec3(in));
+}
+
+int __cdecl apiRaycast(const float* origin, const float* direction, float maxDistance, float* out, unsigned* body)
+{
+    const auto hit = physics3d::World3D::instance().raycast(vec3(origin), vec3(direction), maxDistance);
+    if (!hit)
+        return 0;
+    out[0] = hit->distance;
+    out[1] = hit->point.x;
+    out[2] = hit->point.y;
+    out[3] = hit->point.z;
+    out[4] = hit->normal.x;
+    out[5] = hit->normal.y;
+    out[6] = hit->normal.z;
+    *body  = hit->body;
+    return 1;
+}
+
+int __cdecl apiContactCount()
+{
+    return static_cast<int>(physics3d::World3D::instance().contacts().size());
+}
+
+int __cdecl apiGetContact(int index, unsigned* a, unsigned* b, float* out)
+{
+    const auto& contacts = physics3d::World3D::instance().contacts();
+    if (index < 0 || static_cast<std::size_t>(index) >= contacts.size())
+        return 0;
+    const auto& c = contacts[static_cast<std::size_t>(index)];
+    *a     = c.a;
+    *b     = c.b;
+    out[0] = c.point.x;
+    out[1] = c.point.y;
+    out[2] = c.point.z;
+    out[3] = c.normal.x;
+    out[4] = c.normal.y;
+    out[5] = c.normal.z;
+    out[6] = c.penetration;
+    return 1;
+}
+
+unsigned __cdecl apiPlaySound(const char* path, int length, float volume, float pitch, int loop, int category)
+{
+    auto& manager = audio::AudioManager::instance();
+    if (!manager.isInitialized())
+        return 0;
+    auto clip = audio::ClipCache::instance().loadSync(text(path, length));
+    if (!clip)
+        return 0;
+    audio::PlayParams params;
+    params.volume   = volume;
+    params.pitch    = pitch;
+    params.loop     = loop != 0;
+    params.category = category == 1 ? audio::Category::Music : audio::Category::Sfx;
+    return manager.play(std::move(clip), params);
+}
+
+void __cdecl apiStopSound(unsigned voice)
+{
+    audio::AudioManager::instance().stop(voice);
+}
+
+void __cdecl apiSetSound(unsigned voice, int what, float value)
+{
+    if (what == 0)
+        audio::AudioManager::instance().setVolume(voice, value);
+    else
+        audio::AudioManager::instance().setPitch(voice, value);
+}
+
+int __cdecl apiIsSoundPlaying(unsigned voice)
+{
+    return audio::AudioManager::instance().isPlaying(voice) ? 1 : 0;
+}
+
+void __cdecl apiSetCategoryVolume(int category, float volume)
+{
+    audio::AudioManager::instance().setCategoryVolume(category == 1 ? audio::Category::Music : audio::Category::Sfx,
+                                                       volume);
+}
+
+void* __cdecl apiInstantiate(void* parent, const char* path, int length)
+{
+    if (!parent)
+        return nullptr;
+    auto prefab = std::make_unique<scene3d::PrefabNode>();
+    std::string error;
+    if (!prefab->setSource(text(path, length), &error))
+    {
+        std::lock_guard<std::mutex> lock(gLogMutex);
+        gPendingLog.push_back("[error] No se pudo instanciar el prefab: " + error);
+        return nullptr;
+    }
+    return asNode(parent)->addChild(std::move(prefab));
+}
+
+void __cdecl apiLoadScene(const char* path, int length)
+{
+    std::lock_guard<std::mutex> lock(gSceneMutex);
+    gSceneRequest = text(path, length);
 }
 
 fs::path findHostfxr()
@@ -428,11 +779,43 @@ bool DotNetRuntime::start(const fs::path& workDir, std::string* error)
     impl_->api.isKeyDown        = apiIsKeyDown;
     impl_->api.isMouseDown      = apiIsMouseDown;
     impl_->api.getMousePosition = apiGetMousePosition;
+    impl_->api.createNode        = apiCreateNode;
+    impl_->api.destroyNode       = apiDestroyNode;
+    impl_->api.findChild         = apiFindChild;
+    impl_->api.getParent         = apiGetParent;
+    impl_->api.getChildCount     = apiGetChildCount;
+    impl_->api.getChild          = apiGetChild;
+    impl_->api.setVisible        = apiSetVisible;
+    impl_->api.isVisible         = apiIsVisible;
+    impl_->api.setName           = apiSetName;
+    impl_->api.setMesh           = apiSetMesh;
+    impl_->api.setColor          = apiSetColor;
+    impl_->api.setTexture        = apiSetTexture;
+    impl_->api.setLight          = apiSetLight;
+    impl_->api.createBody        = apiCreateBody;
+    impl_->api.destroyBody       = apiDestroyBody;
+    impl_->api.hasBody           = apiHasBody;
+    impl_->api.getBodyVector     = apiGetBodyVector;
+    impl_->api.setBodyVector     = apiSetBodyVector;
+    impl_->api.applyBody         = apiApplyBody;
+    impl_->api.getGravity        = apiGetGravity;
+    impl_->api.setGravity        = apiSetGravity;
+    impl_->api.raycast           = apiRaycast;
+    impl_->api.contactCount      = apiContactCount;
+    impl_->api.getContact        = apiGetContact;
+    impl_->api.playSound         = apiPlaySound;
+    impl_->api.stopSound         = apiStopSound;
+    impl_->api.setSound          = apiSetSound;
+    impl_->api.isSoundPlaying    = apiIsSoundPlaying;
+    impl_->api.setCategoryVolume = apiSetCategoryVolume;
+    impl_->api.loadScene         = apiLoadScene;
+    impl_->api.instantiate       = apiInstantiate;
     impl_->initialize(&impl_->api);
 
     impl_->running = true;
 
     Registry::instance().setProvider(
+        "dotnet",
         []() { return DotNetRuntime::instance().scriptNames(); },
         [](const std::string& name) -> std::unique_ptr<Script> {
             const auto names = DotNetRuntime::instance().scriptNames();
@@ -500,15 +883,103 @@ std::vector<std::string> DotNetRuntime::takeLog()
     return out;
 }
 
-bool DotNetRuntime::dotnetSdkAvailable()
+std::string DotNetRuntime::takeSceneRequest()
+{
+    std::lock_guard<std::mutex> lock(gSceneMutex);
+    std::string out;
+    out.swap(gSceneRequest);
+    return out;
+}
+
+namespace
+{
+
+fs::path findDotnet()
 {
     wchar_t buffer[MAX_PATH];
-    return SearchPathW(nullptr, L"dotnet", L".exe", MAX_PATH, buffer, nullptr) != 0;
+    if (SearchPathW(nullptr, L"dotnet", L".exe", MAX_PATH, buffer, nullptr) != 0)
+        return buffer;
+    for (const char* variable : {"ProgramFiles", "ProgramFiles(x86)"})
+    {
+        const char* root = std::getenv(variable);
+        if (!root || !*root)
+            continue;
+        const fs::path candidate = fs::path(root) / "dotnet" / "dotnet.exe";
+        std::error_code ec;
+        if (fs::exists(candidate, ec))
+            return candidate;
+    }
+    return {};
+}
+
+}
+
+bool DotNetRuntime::dotnetSdkAvailable()
+{
+    return !findDotnet().empty();
 }
 
 fs::path DotNetRuntime::scriptsDllPath(const fs::path& projectDir)
 {
     return projectDir / ".zio" / "bin" / "Scripts.dll";
+}
+
+bool DotNetRuntime::installSdk(std::string* error)
+{
+    const HINSTANCE result =
+        ShellExecuteW(nullptr, L"open", L"cmd.exe", L"/k winget install --id Microsoft.DotNet.SDK.8 -e", nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(result) <= 32)
+    {
+        if (error)
+            *error = "No se pudo iniciar winget.";
+        return false;
+    }
+    return true;
+}
+
+namespace
+{
+
+bool writeProjectFiles(const fs::path& projectDir, const fs::path& bridge)
+{
+    std::error_code ec;
+    fs::create_directories(projectDir / ".zio", ec);
+    fs::copy_file(bridge, projectDir / ".zio" / "ZioScripting.dll", fs::copy_options::overwrite_existing, ec);
+    std::ofstream csproj(projectDir / "Scripts.csproj", std::ios::binary | std::ios::trunc);
+    if (!csproj)
+        return false;
+    csproj << "<Project>\n"
+              "  <Import Project=\"Sdk.props\" Sdk=\"Microsoft.NET.Sdk\" />\n"
+              "  <PropertyGroup>\n"
+              "    <TargetFramework>net8.0</TargetFramework>\n"
+              "    <AssemblyName>Scripts</AssemblyName>\n"
+              "    <Nullable>disable</Nullable>\n"
+              "    <ImplicitUsings>disable</ImplicitUsings>\n"
+              "    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n"
+              "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
+              "    <RollForward>LatestMajor</RollForward>\n"
+              "    <DebugType>none</DebugType>\n"
+              "    <BaseIntermediateOutputPath>.zio\\obj\\</BaseIntermediateOutputPath>\n"
+              "  </PropertyGroup>\n"
+              "  <ItemGroup>\n"
+              "    <Compile Include=\"assets\\scripts\\**\\*.cs\" />\n"
+              "    <Reference Include=\"ZioScripting\">\n"
+              "      <HintPath>.zio\\ZioScripting.dll</HintPath>\n"
+              "      <Private>false</Private>\n"
+              "    </Reference>\n"
+              "  </ItemGroup>\n"
+              "  <Import Project=\"Sdk.targets\" Sdk=\"Microsoft.NET.Sdk\" />\n"
+              "</Project>\n";
+    return static_cast<bool>(csproj);
+}
+
+}
+
+void DotNetRuntime::prepareProject(const fs::path& projectDir)
+{
+    auto& rt = instance();
+    if (!rt.impl_->bridge.empty() && fs::exists(rt.impl_->bridge))
+        writeProjectFiles(projectDir, rt.impl_->bridge);
 }
 
 bool DotNetRuntime::buildScripts(const fs::path& projectDir, const std::function<void(const std::string&)>& onLine,
@@ -528,32 +999,8 @@ bool DotNetRuntime::buildScripts(const fs::path& projectDir, const std::function
     const fs::path work = projectDir / ".zio";
     std::error_code ec;
     fs::create_directories(work / "bin", ec);
-    fs::copy_file(rt.impl_->bridge, work / "ZioScripting.dll", fs::copy_options::overwrite_existing, ec);
-
-    {
-        std::ofstream csproj(work / "Scripts.csproj", std::ios::binary | std::ios::trunc);
-        if (!csproj)
-            return fail("No se pudo escribir Scripts.csproj");
-        csproj << "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
-                  "  <PropertyGroup>\n"
-                  "    <TargetFramework>net8.0</TargetFramework>\n"
-                  "    <AssemblyName>Scripts</AssemblyName>\n"
-                  "    <Nullable>disable</Nullable>\n"
-                  "    <ImplicitUsings>disable</ImplicitUsings>\n"
-                  "    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n"
-                  "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
-                  "    <RollForward>LatestMajor</RollForward>\n"
-                  "    <DebugType>none</DebugType>\n"
-                  "  </PropertyGroup>\n"
-                  "  <ItemGroup>\n"
-                  "    <Compile Include=\"..\\assets\\scripts\\**\\*.cs\" />\n"
-                  "    <Reference Include=\"ZioScripting\">\n"
-                  "      <HintPath>ZioScripting.dll</HintPath>\n"
-                  "      <Private>false</Private>\n"
-                  "    </Reference>\n"
-                  "  </ItemGroup>\n"
-                  "</Project>\n";
-    }
+    if (!writeProjectFiles(projectDir, rt.impl_->bridge))
+        return fail("No se pudo escribir Scripts.csproj");
 
     SetEnvironmentVariableW(L"DOTNET_NOLOGO", L"1");
     SetEnvironmentVariableW(L"DOTNET_CLI_TELEMETRY_OPTOUT", L"1");
@@ -566,7 +1013,7 @@ bool DotNetRuntime::buildScripts(const fs::path& projectDir, const std::function
         return fail("No se pudo crear la tuberia para dotnet");
     SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
 
-    std::wstring command = L"dotnet build " + quoted(work / "Scripts.csproj") + L" -c Release -o " +
+    std::wstring command = quoted(findDotnet()) + L" build " + quoted(projectDir / "Scripts.csproj") + L" -c Release -o " +
                            quoted(work / "bin") + L" --nologo -v q -nodeReuse:false";
     STARTUPINFOW startup{};
     startup.cb         = sizeof(startup);
@@ -651,7 +1098,15 @@ std::filesystem::path DotNetRuntime::bridgePath() const { return {}; }
 bool DotNetRuntime::dotnetSdkAvailable() { return false; }
 bool DotNetRuntime::buildScripts(const std::filesystem::path&, const std::function<void(const std::string&)>&, std::string*) { return false; }
 std::filesystem::path DotNetRuntime::scriptsDllPath(const std::filesystem::path& projectDir) { return projectDir / ".zio" / "bin" / "Scripts.dll"; }
+bool DotNetRuntime::installSdk(std::string* error)
+{
+    if (error)
+        *error = "Los scripts de C# solo estan disponibles en Windows.";
+    return false;
+}
+void DotNetRuntime::prepareProject(const std::filesystem::path&) {}
 std::vector<std::string> DotNetRuntime::takeLog() { return {}; }
+std::string DotNetRuntime::takeSceneRequest() { return {}; }
 int DotNetRuntime::createScript(const std::string&) { return 0; }
 void DotNetRuntime::startScript(int, void*) {}
 void DotNetRuntime::updateScript(int, float) {}

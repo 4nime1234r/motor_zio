@@ -136,12 +136,106 @@ void Label::rebuildTexture()
 
 #else
 
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
+#include "internal/TrueType.h"
+
 namespace zio::scene2d
 {
 
 void Label::rebuildTexture()
 {
-    setContentSize({0.f, 0.f});
+    auto& device = render::Device::instance();
+    if (texture_ != render::kInvalidHandle)
+    {
+        device.destroyTexture(texture_);
+        texture_ = render::kInvalidHandle;
+    }
+
+    if (text_.empty())
+    {
+        setContentSize({0.f, 0.f});
+        return;
+    }
+
+    internal::TrueTypeFace face;
+    if (!face.load(fontFamily_, false))
+    {
+        setContentSize({0.f, 0.f});
+        return;
+    }
+
+    const float ascent     = face.ascent(fontSizePx_);
+    const float lineHeight = std::max(1.f, std::round(face.lineHeight(fontSizePx_)));
+
+    std::vector<std::u32string> lines(1);
+    for (const char32_t c : internal::decodeUtf8(text_))
+    {
+        if (c == U'\n')
+            lines.emplace_back();
+        else if (c != U'\r')
+            lines.back().push_back(c);
+    }
+
+    float maxWidth = 1.f;
+    for (const std::u32string& line : lines)
+    {
+        float width = 0.f;
+        for (const char32_t c : line)
+            width += face.advance(c, fontSizePx_);
+        maxWidth = std::max(maxWidth, width);
+    }
+
+    const std::uint32_t width  = std::max(1u, static_cast<std::uint32_t>(std::ceil(maxWidth)));
+    const std::uint32_t height = std::max(1u, static_cast<std::uint32_t>(std::ceil(lineHeight * static_cast<float>(lines.size()))));
+    std::vector<std::uint8_t> pixelsRgba8(static_cast<std::size_t>(width) * height * 4, 0);
+
+    const auto red   = static_cast<std::uint8_t>(std::clamp(color_.r, 0.f, 1.f) * 255.f);
+    const auto green = static_cast<std::uint8_t>(std::clamp(color_.g, 0.f, 1.f) * 255.f);
+    const auto blue  = static_cast<std::uint8_t>(std::clamp(color_.b, 0.f, 1.f) * 255.f);
+    const float alphaScale = std::clamp(color_.a, 0.f, 1.f);
+
+    float baseline = std::round(ascent);
+    for (const std::u32string& line : lines)
+    {
+        float pen = 0.f;
+        for (const char32_t c : line)
+        {
+            internal::TrueTypeFace::GlyphBitmap glyph;
+            if (face.rasterize(c, fontSizePx_, glyph))
+            {
+                const int originX = static_cast<int>(std::lround(pen)) + glyph.offsetX;
+                const int originY = static_cast<int>(baseline) + glyph.offsetY;
+                for (int y = 0; y < glyph.height; ++y)
+                    for (int x = 0; x < glyph.width; ++x)
+                    {
+                        const int px = originX + x;
+                        const int py = originY + y;
+                        if (px < 0 || py < 0 || px >= static_cast<int>(width) || py >= static_cast<int>(height))
+                            continue;
+                        const std::uint8_t coverage = glyph.alpha[static_cast<std::size_t>(y) * glyph.width + x];
+                        std::uint8_t* target = pixelsRgba8.data() + (static_cast<std::size_t>(py) * width + px) * 4;
+                        const auto alpha     = static_cast<std::uint8_t>(std::max<int>(target[3], static_cast<int>(coverage * alphaScale)));
+                        target[0]            = red;
+                        target[1]            = green;
+                        target[2]            = blue;
+                        target[3]            = alpha;
+                    }
+            }
+            pen += face.advance(c, fontSizePx_);
+        }
+        baseline += lineHeight;
+    }
+
+    render::TextureDesc desc{};
+    desc.width       = width;
+    desc.height      = height;
+    desc.pixelsRgba8 = pixelsRgba8.data();
+    texture_         = device.createTexture(desc);
+
+    setContentSize({static_cast<float>(width), static_cast<float>(height)});
 }
 
 }

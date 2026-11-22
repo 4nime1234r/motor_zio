@@ -59,7 +59,9 @@ void writeNode(std::string& out, const Node3D& node, int level)
 
     out += "{\n";
     field(out, in, "type");
-    writeString(out, mesh ? "Mesh" : "Node3D");
+    const auto* lightNode  = dynamic_cast<const LightNode*>(&node);
+    const auto* prefabNode = dynamic_cast<const PrefabNode*>(&node);
+    writeString(out, mesh ? "Mesh" : (lightNode ? "Light" : (prefabNode ? "Prefab" : "Node3D")));
     out += ",\n";
     field(out, in, "name");
     writeString(out, node.name());
@@ -112,6 +114,43 @@ void writeNode(std::string& out, const Node3D& node, int level)
         }
     }
 
+    if (prefabNode)
+    {
+        out += ",\n";
+        field(out, in, "source");
+        writeString(out, prefabNode->source());
+    }
+
+    if (lightNode)
+    {
+        out += ",\n";
+        field(out, in, "light");
+        writeString(out, lightNode->lightType() == LightType::Spot ? "spot" : "point");
+        out += ",\n";
+        field(out, in, "color");
+        const renderer::Color c = lightNode->color();
+        const float ca[3]       = {c.r, c.g, c.b};
+        writeNums(out, ca, 3);
+        out += ",\n";
+        field(out, in, "intensity");
+        writeNumber(out, lightNode->intensity());
+        out += ",\n";
+        field(out, in, "range");
+        writeNumber(out, lightNode->range());
+        out += ",\n";
+        field(out, in, "innerAngle");
+        writeNumber(out, lightNode->innerAngle());
+        out += ",\n";
+        field(out, in, "outerAngle");
+        writeNumber(out, lightNode->outerAngle());
+        out += ",\n";
+        field(out, in, "castShadow");
+        out += lightNode->castShadow() ? "true" : "false";
+        out += ",\n";
+        field(out, in, "shadowOpacity");
+        writeNumber(out, lightNode->shadowOpacity());
+    }
+
     if (!node.scripts().empty())
     {
         out += ",\n";
@@ -127,7 +166,7 @@ void writeNode(std::string& out, const Node3D& node, int level)
         out += ']';
     }
 
-    if (!node.children().empty())
+    if (!node.children().empty() && !prefabNode)
     {
         out += ",\n";
         field(out, in, "children");
@@ -339,6 +378,71 @@ struct Reader : json::Fields
                 mesh->playAnimation(animation, loop);
             }
             out = std::move(mesh);
+        }
+        else if (type == "Prefab")
+        {
+            auto prefab = std::make_unique<PrefabNode>();
+            std::string source;
+            if (!getString(o, "source", path, source, has))
+                return nullptr;
+            if (has && !source.empty())
+            {
+                std::string err;
+                if (!prefab->setSource(source, &err))
+                {
+                    fail(path, "prefab: " + err);
+                    return nullptr;
+                }
+            }
+            out = std::move(prefab);
+        }
+        else if (type == "Light")
+        {
+            auto light = std::make_unique<LightNode>();
+            std::string kind;
+            if (!getString(o, "light", path, kind, has))
+                return nullptr;
+            if (has)
+            {
+                if (kind != "point" && kind != "spot")
+                {
+                    fail(path, "\"light\" must be \"point\" or \"spot\"");
+                    return nullptr;
+                }
+                light->setLightType(kind == "spot" ? LightType::Spot : LightType::Point);
+            }
+            double c[3] = {};
+            if (!getNumbers(o, "color", path, 3, c, has))
+                return nullptr;
+            if (has)
+                light->setColor({static_cast<float>(c[0]), static_cast<float>(c[1]), static_cast<float>(c[2]), 1.f});
+            double d = 0;
+            if (!getNumber(o, "intensity", path, d, has))
+                return nullptr;
+            if (has)
+                light->setIntensity(static_cast<float>(d));
+            if (!getNumber(o, "range", path, d, has))
+                return nullptr;
+            if (has)
+                light->setRange(static_cast<float>(d));
+            if (!getNumber(o, "innerAngle", path, d, has))
+                return nullptr;
+            if (has)
+                light->setInnerAngle(static_cast<float>(d));
+            if (!getNumber(o, "outerAngle", path, d, has))
+                return nullptr;
+            if (has)
+                light->setOuterAngle(static_cast<float>(d));
+            bool cast = false;
+            if (!getBool(o, "castShadow", path, cast, has))
+                return nullptr;
+            if (has)
+                light->setCastShadow(cast);
+            if (!getNumber(o, "shadowOpacity", path, d, has))
+                return nullptr;
+            if (has)
+                light->setShadowOpacity(static_cast<float>(d));
+            out = std::move(light);
         }
         else
         {

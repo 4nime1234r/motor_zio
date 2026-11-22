@@ -33,7 +33,10 @@ enum class NewNodeKind
 {
     Empty,
     Cube,
-    Mesh
+    Mesh,
+    Prefab,
+    PointLight,
+    SpotLight
 };
 
 enum class Decision
@@ -59,6 +62,7 @@ public:
 
     zio::scene3d::Node3D* selected() const { return selected_; }
     zio::scene3d::MeshNode* selectedMesh() const;
+    zio::scene3d::LightNode* selectedLight() const;
     bool select(zio::scene3d::Node3D* node);
     bool toggleSelect(zio::scene3d::Node3D* node);
     void clearSelection();
@@ -74,6 +78,7 @@ public:
 
     zio::scene3d::Node3D* addNode(NewNodeKind kind, std::string_view meshPath = {}, std::string* error = nullptr);
     std::vector<std::string> meshAssets() const;
+    std::vector<std::string> prefabAssets() const;
 
     bool removeSelected(std::string* error = nullptr);
 

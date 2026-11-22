@@ -9,6 +9,20 @@
 namespace zio_editor
 {
 
+struct GameInfo
+{
+    std::string title;
+    std::string author;
+    std::string version = "1.0.0";
+    std::string description;
+    std::string copyright;
+    std::string website;
+    std::string license;
+    std::string id;
+    std::string entryScene;
+    bool allowImport = false;
+};
+
 class ProjectManager
 {
 public:
@@ -25,6 +39,8 @@ public:
     bool isOpen() const { return open_; }
     const std::string& name() const { return name_; }
     const std::filesystem::path& rootDir() const { return root_; }
+    const GameInfo& gameInfo() const { return game_; }
+    bool saveGameInfo(const GameInfo& info, std::string* error = nullptr);
 
     std::filesystem::path assetsDir() const { return root_ / "assets"; }
     std::filesystem::path modelsDir() const { return root_ / "assets" / "models"; }
@@ -44,6 +60,7 @@ private:
     bool open_ = false;
     std::string name_;
     std::filesystem::path root_;
+    GameInfo game_;
 };
 
 }

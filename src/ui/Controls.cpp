@@ -265,8 +265,23 @@ Rect LineEdit::textArea() const
     return rect().shrink(theme().padding, 0.f, theme().padding, 0.f);
 }
 
+std::string LineEdit::masked(std::size_t upToByte) const
+{
+    std::string out;
+    std::size_t index = 0;
+    const std::size_t limit = (std::min)(upToByte, text_.size());
+    while (index < limit)
+    {
+        text::decode(text_, index);
+        out += "\xE2\x80\xA2";
+    }
+    return out;
+}
+
 float LineEdit::widthOf(std::size_t index) const
 {
+    if (password_)
+        return font().textWidth(masked(index));
     return font().textWidth(std::string_view(text_).substr(0, (std::min)(index, text_.size())));
 }
 
@@ -278,7 +293,7 @@ std::size_t LineEdit::indexAtX(float x) const
     while (index < text_.size())
     {
         std::size_t next    = index;
-        const char32_t code = text::decode(text_, next);
+        const char32_t code = password_ ? (text::decode(text_, next), static_cast<char32_t>(0x2022)) : text::decode(text_, next);
         const float advance = f.advance(code);
         if (x < accumulated + advance * 0.5f)
             return index;
@@ -394,7 +409,8 @@ void LineEdit::draw(Painter& painter)
     }
     else
     {
-        painter.text(f, {std::floor(originX), textY}, text_, enabled ? t.text : dimmed(t.text));
+        painter.text(f, {std::floor(originX), textY}, password_ ? masked(text_.size()) : text_,
+                     enabled ? t.text : dimmed(t.text));
     }
 
     if (focused() && enabled && !readOnly_ && context())
@@ -518,7 +534,7 @@ bool LineEdit::onKeyDown(const KeyEvent& event)
     case KeyCode::C:
         if (ctrl)
         {
-            if (hasSelection() && context())
+            if (hasSelection() && context() && !password_)
                 context()->setClipboard(selectedText());
             return true;
         }
@@ -526,7 +542,7 @@ bool LineEdit::onKeyDown(const KeyEvent& event)
     case KeyCode::X:
         if (ctrl)
         {
-            if (hasSelection() && context() && !readOnly_)
+            if (hasSelection() && context() && !readOnly_ && !password_)
             {
                 context()->setClipboard(selectedText());
                 deleteSelection();

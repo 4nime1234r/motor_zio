@@ -1,6 +1,9 @@
 #include "zio/scene3d/Renderer3D.h"
 
 #include <algorithm>
+#include <atomic>
+#include <tuple>
+#include <unordered_map>
 #include <cmath>
 #include <cstddef>
 #include <string_view>
@@ -9,6 +12,7 @@
 #include "zio/render/Device.h"
 
 #include "mesh3d_frag.spv.h"
+#include "mesh3d_inst_vert.spv.h"
 #include "mesh3d_vert.spv.h"
 #include "shadow_frag.spv.h"
 
@@ -24,14 +28,106 @@ struct Vertex
     float r, g, b, a;
     float u, v;
     float nx, ny, nz;
-    float lx, ly, lz, ambient;
-    float sx, sy, sz, sw;
-    float shadowStrength, shadowPad;
+    float wx, wy, wz;
+    float lit, flags;
+    float metallic, roughness, normalScale, occlusion;
+    float er, eg, eb, pad;
 };
+
+struct MaterialKey
+{
+    render::TextureHandle texture[5] = {};
+
+    bool operator==(const MaterialKey& other) const
+    {
+        for (int i = 0; i < 5; ++i)
+            if (texture[i] != other.texture[i])
+                return false;
+        return true;
+    }
+    bool operator!=(const MaterialKey& other) const { return !(*this == other); }
+};
+
+constexpr int kMaxLights = 9;
+constexpr int kMaxTiles  = 13;
+
+struct SceneBlock
+{
+    float head[4];
+    float camPos[4];
+    float tileMat[kMaxTiles][16];
+    float tileRect[kMaxTiles][4];
+    float tileParam[kMaxTiles][4];
+    float lightPos[kMaxLights][4];
+    float lightColor[kMaxLights][4];
+    float lightDir[kMaxLights][4];
+    float lightMisc[kMaxLights][4];
+    float viewProj[16];
+};
+
+struct InstanceData
+{
+    float row[3][4];
+    float normalRow[3][4];
+    float color[4];
+    float material[4];
+    float emissive[4];
+    float flagsUv[4];
+};
+
+constexpr std::size_t kMaxInstances = 2048;
+
+struct MeshBuffer
+{
+    render::BufferHandle handle = render::kInvalidHandle;
+    std::size_t vertexCount     = 0;
+};
+
+std::unordered_map<std::uint64_t, MeshBuffer>& meshBuffers()
+{
+    static auto* buffers = new std::unordered_map<std::uint64_t, MeshBuffer>();
+    return *buffers;
+}
+
+float materialFlags(const MeshStyle& style)
+{
+    float flags = 0.f;
+    if (style.normalTexture != render::kInvalidHandle)
+        flags += 1.f;
+    if (style.metallicRoughnessTexture != render::kInvalidHandle)
+        flags += 2.f;
+    if (style.emissiveTexture != render::kInvalidHandle)
+        flags += 4.f;
+    if (style.occlusionTexture != render::kInvalidHandle)
+        flags += 8.f;
+    if (style.alphaMode == AlphaMode::Mask)
+        flags += 16.f;
+    if (style.doubleSided)
+        flags += 32.f;
+    return flags;
+}
+
+struct Tile
+{
+    math::Mat4 viewProj;
+    std::uint32_t x = 0, y = 0, size = 0;
+    float normalOffset = 0.f;
+    float bias         = 0.f;
+    float nearZ        = 0.f;
+    float farZ         = 0.f;
+};
+
+constexpr std::uint32_t kLocalTileSize = 1024;
+constexpr int kLocalTileSlots          = 12;
 
 constexpr std::size_t kMaxVertices = 3 * 30000;
 
 constexpr float kOpaqueAlpha = 0.999f;
+
+bool isTranslucent(const MeshStyle& style)
+{
+    return style.alphaMode == AlphaMode::Blend || style.color.a < kOpaqueAlpha;
+}
 
 constexpr float kShadowCasterMargin = 30.f;
 constexpr float kShadowNormalOffsetTexels = 1.5f;
@@ -42,6 +138,46 @@ struct Command
     math::Mat4 world;
     MeshStyle style;
     float distanceSq;
+    std::size_t first;
+    std::size_t count;
+    bool boundsReady = false;
+    bool boundsValid = false;
+    math::Vec3 center;
+    float radius = 0.f;
+};
+
+struct Frustum
+{
+    float planes[6][4] = {};
+
+    void build(const math::Mat4& viewProj)
+    {
+        const float(&m)[4][4] = viewProj.m;
+        for (int c = 0; c < 4; ++c)
+        {
+            planes[0][c] = m[3][c] + m[0][c];
+            planes[1][c] = m[3][c] - m[0][c];
+            planes[2][c] = m[3][c] + m[1][c];
+            planes[3][c] = m[3][c] - m[1][c];
+            planes[4][c] = m[2][c];
+            planes[5][c] = m[3][c] - m[2][c];
+        }
+        for (auto& plane : planes)
+        {
+            const float length = std::sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]);
+            if (length > 1e-8f)
+                for (float& v : plane)
+                    v /= length;
+        }
+    }
+
+    bool sees(const math::Vec3& center, float radius) const
+    {
+        for (const auto& plane : planes)
+            if (plane[0] * center.x + plane[1] * center.y + plane[2] * center.z + plane[3] < -radius)
+                return false;
+        return true;
+    }
 };
 
 }
@@ -52,6 +188,8 @@ struct Renderer3D::Impl
 
     render::PipelineHandle opaquePipeline      = render::kInvalidHandle;
     render::PipelineHandle translucentPipeline = render::kInvalidHandle;
+    render::PipelineHandle opaqueTwoSided      = render::kInvalidHandle;
+    render::PipelineHandle translucentTwoSided = render::kInvalidHandle;
     render::PipelineHandle shadowDepthPipeline = render::kInvalidHandle;
     render::PipelineHandle overlayPipeline     = render::kInvalidHandle;
     render::PipelineHandle depthLinePipeline   = render::kInvalidHandle;
@@ -62,12 +200,19 @@ struct Renderer3D::Impl
     math::Mat4 lightViewProj;
     bool shadowsActive      = false;
     float shadowNormalOffset = 0.f;
+    std::vector<LocalLight> locals;
     Camera camera;
     float aspect = 1.f;
     math::Vec3 cameraPos;
     Light light;
     math::Vec3 toLight = {0.f, 1.f, 0.f};
     std::vector<Command> commands;
+    Frustum frustum;
+    std::size_t culled    = 0;
+    std::size_t instanced = 0;
+    render::PipelineHandle instancedPipeline          = render::kInvalidHandle;
+    render::PipelineHandle instancedTwoSidedPipeline  = render::kInvalidHandle;
+    render::BufferHandle instanceBuffer               = render::kInvalidHandle;
 
     struct Line
     {
@@ -85,7 +230,7 @@ struct Renderer3D::Impl
 
     std::vector<Vertex> pending;
     render::PipelineHandle currentPipeline = render::kInvalidHandle;
-    render::TextureHandle currentTexture   = render::kInvalidHandle;
+    MaterialKey currentMaterial;
 
     render::PipelineHandle makePipeline(bool depthWrite, bool cullBack, bool depthTest = true, bool shadowPass = false)
     {
@@ -94,22 +239,181 @@ struct Renderer3D::Impl
             {"COLOR", 0, render::VertexFormat::Float4, offsetof(Vertex, r)},
             {"TEXCOORD", 0, render::VertexFormat::Float2, offsetof(Vertex, u)},
             {"NORMAL", 0, render::VertexFormat::Float3, offsetof(Vertex, nx)},
-            {"TEXCOORD", 1, render::VertexFormat::Float4, offsetof(Vertex, lx)},
-            {"TEXCOORD", 2, render::VertexFormat::Float4, offsetof(Vertex, sx)},
-            {"TEXCOORD", 3, render::VertexFormat::Float2, offsetof(Vertex, shadowStrength)},
+            {"TEXCOORD", 1, render::VertexFormat::Float3, offsetof(Vertex, wx)},
+            {"TEXCOORD", 2, render::VertexFormat::Float2, offsetof(Vertex, lit)},
+            {"TEXCOORD", 3, render::VertexFormat::Float4, offsetof(Vertex, metallic)},
+            {"TEXCOORD", 4, render::VertexFormat::Float4, offsetof(Vertex, er)},
         };
         render::PipelineDesc desc{};
         desc.vertexShaderSpirv = zio_mesh3d_vert_spirv;
         desc.pixelShaderSpirv  = shadowPass ? std::span<const std::uint32_t>(zio_shadow_frag_spirv)
                                             : std::span<const std::uint32_t>(zio_mesh3d_frag_spirv);
         desc.attributes        = attrs;
-        desc.attributeCount    = 7;
+        desc.attributeCount    = 8;
         desc.vertexStrideBytes = sizeof(Vertex);
         desc.depthTest         = depthTest;
         desc.depthWrite        = depthWrite;
         desc.cullBack          = cullBack;
         desc.shadowPass        = shadowPass;
         return render::Device::instance().createPipeline(desc);
+    }
+
+    render::PipelineHandle makeInstancedPipeline(bool cullBack)
+    {
+        render::VertexAttribute attrs[] = {
+            {"POSITION", 0, render::VertexFormat::Float3, offsetof(Vertex3D, position)},
+            {"NORMAL", 0, render::VertexFormat::Float3, offsetof(Vertex3D, normal)},
+            {"TEXCOORD", 0, render::VertexFormat::Float2, offsetof(Vertex3D, u)},
+            {"COLOR", 0, render::VertexFormat::Float4, offsetof(Vertex3D, r)},
+        };
+        render::VertexAttribute inst[] = {
+            {"TEXCOORD", 1, render::VertexFormat::Float4, offsetof(InstanceData, row[0])},
+            {"TEXCOORD", 2, render::VertexFormat::Float4, offsetof(InstanceData, row[1])},
+            {"TEXCOORD", 3, render::VertexFormat::Float4, offsetof(InstanceData, row[2])},
+            {"TEXCOORD", 4, render::VertexFormat::Float4, offsetof(InstanceData, normalRow[0])},
+            {"TEXCOORD", 5, render::VertexFormat::Float4, offsetof(InstanceData, normalRow[1])},
+            {"TEXCOORD", 6, render::VertexFormat::Float4, offsetof(InstanceData, normalRow[2])},
+            {"TEXCOORD", 7, render::VertexFormat::Float4, offsetof(InstanceData, color)},
+            {"TEXCOORD", 8, render::VertexFormat::Float4, offsetof(InstanceData, material)},
+            {"TEXCOORD", 9, render::VertexFormat::Float4, offsetof(InstanceData, emissive)},
+            {"TEXCOORD", 10, render::VertexFormat::Float4, offsetof(InstanceData, flagsUv)},
+        };
+        render::PipelineDesc desc{};
+        desc.vertexShaderSpirv       = zio_mesh3d_inst_vert_spirv;
+        desc.pixelShaderSpirv        = zio_mesh3d_frag_spirv;
+        desc.attributes              = attrs;
+        desc.attributeCount          = 4;
+        desc.vertexStrideBytes       = sizeof(Vertex3D);
+        desc.instanceAttributes      = inst;
+        desc.instanceAttributeCount  = 10;
+        desc.instanceStrideBytes     = sizeof(InstanceData);
+        desc.depthTest               = true;
+        desc.depthWrite              = true;
+        desc.cullBack                = cullBack;
+        return render::Device::instance().createPipeline(desc);
+    }
+
+    render::BufferHandle meshBuffer(const Mesh& mesh)
+    {
+        static std::atomic<std::uint64_t> counter{0};
+        if (mesh.gpu.value == 0)
+            mesh.gpu.value = ++counter;
+        auto& buffers = meshBuffers();
+        auto& entry   = buffers[mesh.gpu.value];
+        auto& device  = render::Device::instance();
+        if (entry.handle != render::kInvalidHandle && entry.vertexCount == mesh.vertices.size())
+            return entry.handle;
+        if (entry.handle != render::kInvalidHandle)
+            device.destroyBuffer(entry.handle);
+        render::BufferDesc desc{};
+        desc.type      = render::BufferType::Vertex;
+        desc.usage     = render::BufferUsage::Immutable;
+        desc.data      = mesh.vertices.data();
+        desc.sizeBytes = mesh.vertices.size() * sizeof(Vertex3D);
+        entry.handle      = device.createBuffer(desc);
+        entry.vertexCount = mesh.vertices.size();
+        return entry.handle;
+    }
+
+    static bool instanceable(const Command& cmd)
+    {
+        if (cmd.mesh->dynamic || cmd.count == 0 || cmd.count % 3 != 0 || cmd.style.alphaMode == AlphaMode::Blend)
+            return false;
+        if (cmd.first + cmd.count > cmd.mesh->vertices.size())
+            return false;
+        const float(&w)[4][4] = cmd.world.m;
+        const float det = w[0][0] * (w[1][1] * w[2][2] - w[1][2] * w[2][1]) +
+                          w[0][1] * (w[1][2] * w[2][0] - w[1][0] * w[2][2]) +
+                          w[0][2] * (w[1][0] * w[2][1] - w[1][1] * w[2][0]);
+        return det > 0.f;
+    }
+
+    static std::tuple<const Mesh*, std::size_t, std::size_t, bool, render::TextureHandle, render::TextureHandle,
+                      render::TextureHandle, render::TextureHandle, render::TextureHandle>
+    groupKey(const Command& cmd)
+    {
+        return {cmd.mesh,
+                cmd.first,
+                cmd.count,
+                cmd.style.doubleSided,
+                cmd.style.texture,
+                cmd.style.normalTexture,
+                cmd.style.metallicRoughnessTexture,
+                cmd.style.emissiveTexture,
+                cmd.style.occlusionTexture};
+    }
+
+    void fillInstance(const Command& cmd, InstanceData& out) const
+    {
+        const float(&w)[4][4] = cmd.world.m;
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 4; ++c)
+                out.row[r][c] = w[r][c];
+        out.normalRow[0][0] = w[1][1] * w[2][2] - w[1][2] * w[2][1];
+        out.normalRow[0][1] = w[1][2] * w[2][0] - w[1][0] * w[2][2];
+        out.normalRow[0][2] = w[1][0] * w[2][1] - w[1][1] * w[2][0];
+        out.normalRow[1][0] = w[0][2] * w[2][1] - w[0][1] * w[2][2];
+        out.normalRow[1][1] = w[0][0] * w[2][2] - w[0][2] * w[2][0];
+        out.normalRow[1][2] = w[0][1] * w[2][0] - w[0][0] * w[2][1];
+        out.normalRow[2][0] = w[0][1] * w[1][2] - w[0][2] * w[1][1];
+        out.normalRow[2][1] = w[0][2] * w[1][0] - w[0][0] * w[1][2];
+        out.normalRow[2][2] = w[0][0] * w[1][1] - w[0][1] * w[1][0];
+        for (int r = 0; r < 3; ++r)
+            out.normalRow[r][3] = 0.f;
+        const MeshStyle& st = cmd.style;
+        out.color[0]        = st.color.r;
+        out.color[1]        = st.color.g;
+        out.color[2]        = st.color.b;
+        out.color[3]        = st.color.a;
+        out.material[0]     = st.metallic;
+        out.material[1]     = st.roughness;
+        out.material[2]     = st.normalScale;
+        out.material[3]     = st.occlusionStrength;
+        out.emissive[0]     = st.emissive[0];
+        out.emissive[1]     = st.emissive[1];
+        out.emissive[2]     = st.emissive[2];
+        out.emissive[3]     = st.alphaCutoff;
+        out.flagsUv[0]      = materialFlags(st);
+        out.flagsUv[1]      = st.uvScale.x;
+        out.flagsUv[2]      = st.uvScale.y;
+        out.flagsUv[3]      = 0.f;
+    }
+
+    bool drawInstanced(const std::vector<Command*>& cmds, std::size_t begin, std::size_t end)
+    {
+        const Command& head = *cmds[begin];
+        const render::BufferHandle vb = meshBuffer(*head.mesh);
+        if (vb == render::kInvalidHandle)
+            return false;
+
+        flush();
+        auto& device = render::Device::instance();
+        device.bindPipeline(head.style.doubleSided ? instancedTwoSidedPipeline : instancedPipeline);
+        device.bindVertexBuffer(vb, sizeof(Vertex3D));
+        device.bindTexture(head.style.texture == render::kInvalidHandle ? whiteTexture : head.style.texture, 0);
+        device.bindTexture(head.style.normalTexture, 1);
+        device.bindTexture(head.style.metallicRoughnessTexture, 2);
+        device.bindTexture(head.style.emissiveTexture, 3);
+        device.bindTexture(head.style.occlusionTexture, 4);
+        device.bindShadowMap();
+
+        std::vector<InstanceData> data;
+        for (std::size_t first = begin; first < end; first += kMaxInstances)
+        {
+            const std::size_t last = std::min(end, first + kMaxInstances);
+            data.resize(last - first);
+            for (std::size_t i = first; i < last; ++i)
+                fillInstance(*cmds[i], data[i - first]);
+            if (!device.updateBuffer(instanceBuffer, data.data(),
+                                     static_cast<std::uint32_t>(data.size() * sizeof(InstanceData))))
+                return true;
+            device.bindInstanceBuffer(instanceBuffer);
+            device.draw(static_cast<std::uint32_t>(head.count), static_cast<std::uint32_t>(head.first),
+                        static_cast<std::uint32_t>(data.size()));
+        }
+        instanced += end - begin;
+        currentPipeline = render::kInvalidHandle;
+        return true;
     }
 
     bool init()
@@ -120,10 +424,14 @@ struct Renderer3D::Impl
 
         opaquePipeline      = makePipeline(true, true);
         translucentPipeline = makePipeline(false, true);
+        opaqueTwoSided      = makePipeline(true, false);
+        translucentTwoSided = makePipeline(false, false);
         shadowDepthPipeline = makePipeline(true, false, true, true);
         overlayPipeline     = makePipeline(false, false, false);
         depthLinePipeline   = makePipeline(false, false, true);
         if (overlayPipeline == render::kInvalidHandle || depthLinePipeline == render::kInvalidHandle)
+            return false;
+        if (opaqueTwoSided == render::kInvalidHandle || translucentTwoSided == render::kInvalidHandle)
             return false;
         if (opaquePipeline == render::kInvalidHandle || translucentPipeline == render::kInvalidHandle ||
             shadowDepthPipeline == render::kInvalidHandle)
@@ -135,6 +443,17 @@ struct Renderer3D::Impl
         vb.sizeBytes = kMaxVertices * sizeof(Vertex);
         vertexBuffer = device.createBuffer(vb);
         if (vertexBuffer == render::kInvalidHandle)
+            return false;
+
+        instancedPipeline         = makeInstancedPipeline(true);
+        instancedTwoSidedPipeline = makeInstancedPipeline(false);
+        render::BufferDesc ib{};
+        ib.type      = render::BufferType::Vertex;
+        ib.usage     = render::BufferUsage::Dynamic;
+        ib.sizeBytes = kMaxInstances * sizeof(InstanceData);
+        instanceBuffer = device.createBuffer(ib);
+        if (instancedPipeline == render::kInvalidHandle || instancedTwoSidedPipeline == render::kInvalidHandle ||
+            instanceBuffer == render::kInvalidHandle)
             return false;
 
         const std::uint8_t white[4] = {255, 255, 255, 255};
@@ -159,28 +478,44 @@ struct Renderer3D::Impl
         device.updateBuffer(vertexBuffer, pending.data(), static_cast<std::uint32_t>(pending.size() * sizeof(Vertex)));
         device.bindPipeline(currentPipeline);
         device.bindVertexBuffer(vertexBuffer, sizeof(Vertex));
-        device.bindTexture(currentTexture);
+        for (std::uint32_t slot = 0; slot < 5; ++slot)
+            device.bindTexture(currentMaterial.texture[slot], slot);
         if (currentPipeline != shadowDepthPipeline)
             device.bindShadowMap();
         device.draw(static_cast<std::uint32_t>(pending.size()));
         pending.clear();
     }
 
-    void prepareBatch(render::PipelineHandle pipeline, render::TextureHandle texture)
+    void prepareBatch(render::PipelineHandle pipeline, MaterialKey key)
     {
-        if (texture == render::kInvalidHandle)
-            texture = whiteTexture;
-        if (!pending.empty() && (pipeline != currentPipeline || texture != currentTexture))
+        if (key.texture[0] == render::kInvalidHandle)
+            key.texture[0] = whiteTexture;
+        if (!pending.empty() && (pipeline != currentPipeline || key != currentMaterial))
             flush();
         else if (pending.size() + 3 > kMaxVertices)
             flush();
         currentPipeline = pipeline;
-        currentTexture  = texture;
+        currentMaterial = key;
+    }
+
+    void prepareBatch(render::PipelineHandle pipeline, render::TextureHandle texture = render::kInvalidHandle)
+    {
+        MaterialKey key;
+        key.texture[0] = texture;
+        prepareBatch(pipeline, key);
     }
 
     void emit(const Command& cmd, render::PipelineHandle pipeline)
     {
-        prepareBatch(pipeline, cmd.style.texture);
+        MaterialKey key;
+        key.texture[0] = cmd.style.texture;
+        key.texture[1] = cmd.style.normalTexture;
+        key.texture[2] = cmd.style.metallicRoughnessTexture;
+        key.texture[3] = cmd.style.emissiveTexture;
+        key.texture[4] = cmd.style.occlusionTexture;
+        prepareBatch(pipeline, key);
+
+        const float flags = materialFlags(cmd.style);
 
         const math::Mat4 mvp  = viewProj * cmd.world;
         const float(&m)[4][4] = mvp.m;
@@ -200,8 +535,8 @@ struct Renderer3D::Impl
 
         const auto& verts = cmd.mesh->vertices;
         const auto& col   = cmd.style.color;
-        const float(&lm)[4][4] = lightViewProj.m;
-        for (std::size_t i = 0; i + 2 < verts.size(); i += 3)
+        const std::size_t end = std::min(verts.size(), cmd.first + cmd.count);
+        for (std::size_t i = cmd.first; i + 2 < end; i += 3)
         {
             if (pending.size() + 3 > kMaxVertices)
                 flush();
@@ -214,26 +549,19 @@ struct Renderer3D::Impl
                              (c10 * v.normal.x + c11 * v.normal.y + c12 * v.normal.z) * sgn,
                              (c20 * v.normal.x + c21 * v.normal.y + c22 * v.normal.z) * sgn};
                 n = n.normalized();
-                float sx = 0.f, sy = 0.f, sz = 0.f, sw = 0.f;
-                if (shadowsActive)
-                {
-                    const math::Vec3 wp = cmd.world.transformPoint(v.position) + n * shadowNormalOffset;
-                    sx = lm[0][0] * wp.x + lm[0][1] * wp.y + lm[0][2] * wp.z + lm[0][3];
-                    sy = lm[1][0] * wp.x + lm[1][1] * wp.y + lm[1][2] * wp.z + lm[1][3];
-                    sz = lm[2][0] * wp.x + lm[2][1] * wp.y + lm[2][2] * wp.z + lm[2][3];
-                    sw = lm[3][0] * wp.x + lm[3][1] * wp.y + lm[3][2] * wp.z + lm[3][3];
-                }
+                const math::Vec3 wp = cmd.world.transformPoint(v.position);
                 pending.push_back(Vertex{
                     m[0][0] * x + m[0][1] * y + m[0][2] * z + m[0][3],
                     m[1][0] * x + m[1][1] * y + m[1][2] * z + m[1][3],
                     m[2][0] * x + m[2][1] * y + m[2][2] * z + m[2][3],
                     m[3][0] * x + m[3][1] * y + m[3][2] * z + m[3][3],
-                    col.r, col.g, col.b, col.a,
+                    col.r * v.r, col.g * v.g, col.b * v.b, col.a * v.a,
                     v.u * cmd.style.uvScale.x, v.v * cmd.style.uvScale.y,
                     n.x, n.y, n.z,
-                    toLight.x, toLight.y, toLight.z, light.ambient,
-                    sx, sy, sz, sw,
-                    shadowsActive ? light.shadowOpacity : 0.f, 0.f});
+                    wp.x, wp.y, wp.z,
+                    1.f, flags,
+                    cmd.style.metallic, cmd.style.roughness, cmd.style.normalScale, cmd.style.occlusionStrength,
+                    cmd.style.emissive[0], cmd.style.emissive[1], cmd.style.emissive[2], cmd.style.alphaCutoff});
             }
         }
     }
@@ -313,12 +641,12 @@ struct Renderer3D::Impl
             {
                 const renderer::Color& col = c[qc[idx]];
                 pending.push_back(Vertex{qx[idx], qy[idx], qz[idx], 1.f, col.r, col.g, col.b, col.a, 0.f, 0.f, 0.f,
-                                         1.f, 0.f, 0.f, 1.f, 0.f, 1.f});
+                                         0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f});
             }
         }
     }
 
-    void buildLightMatrix()
+    Tile buildLightMatrix()
     {
         const math::Vec3 dir = light.direction.normalized();
         const math::Vec3 up  = std::fabs(dir.y) > 0.95f ? math::Vec3{0.f, 0.f, 1.f} : math::Vec3{0.f, 1.f, 0.f};
@@ -370,18 +698,66 @@ struct Renderer3D::Impl
         proj.m[2][2] = -1.f / (farD - nearD);
         proj.m[2][3] = -nearD / (farD - nearD);
 
-        lightViewProj       = proj * view;
-        shadowNormalOffset  = texel * kShadowNormalOffsetTexels;
+        Tile tile;
+        tile.viewProj     = proj * view;
+        tile.x            = 0;
+        tile.y            = 0;
+        tile.size         = render::Device::instance().shadowMapSize();
+        tile.normalOffset = texel * kShadowNormalOffsetTexels;
+        tile.bias         = 0.0004f;
+        return tile;
     }
 
-    void emitDepth(const Command& cmd)
+    void ensureBounds(Command& cmd)
+    {
+        if (cmd.boundsReady)
+            return;
+        cmd.boundsReady = true;
+        const auto& verts = cmd.mesh->vertices;
+        const std::size_t end = std::min(verts.size(), cmd.first + cmd.count);
+        if (cmd.first >= end)
+            return;
+        math::Vec3 lo = verts[cmd.first].position, hi = lo;
+        for (std::size_t i = cmd.first; i < end; ++i)
+        {
+            const math::Vec3& p = verts[i].position;
+            lo = {std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)};
+            hi = {std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z)};
+        }
+        const math::Vec3 mid = (lo + hi) * 0.5f;
+        const float localR   = (hi - mid).length();
+        const float(&w)[4][4] = cmd.world.m;
+        float sx = 0.f, sy = 0.f, sz = 0.f;
+        for (int c = 0; c < 3; ++c)
+        {
+            sx += w[0][c] * w[0][c];
+            sy += w[1][c] * w[1][c];
+            sz += w[2][c] * w[2][c];
+        }
+        const float scale = std::sqrt(std::max({sx, sy, sz}));
+        cmd.center        = cmd.world.transformPoint(mid);
+        cmd.radius        = localR * scale;
+        cmd.boundsValid   = true;
+    }
+
+    bool visible(Command& cmd)
+    {
+        ensureBounds(cmd);
+        const bool seen = !cmd.boundsValid || frustum.sees(cmd.center, cmd.radius);
+        if (!seen)
+            ++culled;
+        return seen;
+    }
+
+    void emitDepth(const Command& cmd, const math::Mat4& lightMatrix)
     {
         prepareBatch(shadowDepthPipeline, render::kInvalidHandle);
 
-        const math::Mat4 mvp  = lightViewProj * cmd.world;
+        const math::Mat4 mvp  = lightMatrix * cmd.world;
         const float(&m)[4][4] = mvp.m;
         const auto& verts     = cmd.mesh->vertices;
-        for (std::size_t i = 0; i + 2 < verts.size(); i += 3)
+        const std::size_t end = std::min(verts.size(), cmd.first + cmd.count);
+        for (std::size_t i = cmd.first; i + 2 < end; i += 3)
         {
             if (pending.size() + 3 > kMaxVertices)
                 flush();
@@ -424,6 +800,7 @@ void Renderer3D::begin(const Camera& camera, const Light& light, std::uint32_t v
     impl_->viewProj  = camera.projectionMatrix(aspect) * camera.viewMatrix();
     impl_->cameraPos = camera.position;
     impl_->light     = light;
+    impl_->locals.clear();
     impl_->light.ambient       = std::clamp(light.ambient, 0.f, 1.f);
     impl_->light.shadowOpacity = std::clamp(light.shadowOpacity, 0.f, 1.f);
     impl_->toLight   = (-light.direction).normalized();
@@ -435,6 +812,13 @@ void Renderer3D::begin(const Camera& camera, const Light& light, std::uint32_t v
     impl_->commands.clear();
     impl_->lines.clear();
     impl_->pending.clear();
+}
+
+void Renderer3D::addLight(const LocalLight& light)
+{
+    if (!impl_->initialized || !(light.range > 0.f) || !(light.intensity > 0.f))
+        return;
+    impl_->locals.push_back(light);
 }
 
 void Renderer3D::drawLine(math::Vec3 a, math::Vec3 b, renderer::Color color, float widthPixels, LineMode mode)
@@ -452,11 +836,44 @@ void Renderer3D::drawLine(math::Vec3 a, math::Vec3 b, renderer::Color colorA, re
 
 void Renderer3D::drawMesh(const Mesh& mesh, const math::Mat4& world, const MeshStyle& style)
 {
-    if (!impl_->initialized || mesh.vertices.empty())
+    drawMeshPart(mesh, 0, mesh.vertices.size(), world, style);
+}
+
+void Renderer3D::drawMeshPart(const Mesh& mesh, std::size_t firstVertex, std::size_t vertexCount, const math::Mat4& world,
+                              const MeshStyle& style)
+{
+    if (!impl_->initialized || mesh.vertices.empty() || vertexCount == 0 || firstVertex >= mesh.vertices.size())
         return;
     const math::Vec3 origin{world.m[0][3], world.m[1][3], world.m[2][3]};
     const math::Vec3 d = origin - impl_->cameraPos;
-    impl_->commands.push_back(Command{&mesh, world, style, d.dot(d)});
+    impl_->commands.push_back(Command{&mesh, world, style, d.dot(d), firstVertex, vertexCount});
+}
+
+std::size_t Renderer3D::instancedLastFrame() const
+{
+    return impl_->instanced;
+}
+
+void Renderer3D::releaseMeshBuffers(std::uint64_t id)
+{
+    auto& buffers = meshBuffers();
+    const auto it = buffers.find(id);
+    if (it == buffers.end())
+        return;
+    if (it->second.handle != render::kInvalidHandle && render::Device::instance().isInitialized())
+        render::Device::instance().destroyBuffer(it->second.handle);
+    buffers.erase(it);
+}
+
+GpuId::~GpuId()
+{
+    if (value != 0)
+        Renderer3D::releaseMeshBuffers(value);
+}
+
+std::size_t Renderer3D::culledLastFrame() const
+{
+    return impl_->culled;
 }
 
 void Renderer3D::end()
@@ -465,39 +882,256 @@ void Renderer3D::end()
     if (!s.initialized)
         return;
 
-    s.shadowsActive = false;
-    if (s.light.shadows && s.light.shadowOpacity > 0.f && s.light.direction.length() > 1e-4f)
+    auto& device = render::Device::instance();
+
+    std::sort(s.locals.begin(), s.locals.end(), [&](const LocalLight& a, const LocalLight& b) {
+        const math::Vec3 da = a.position - s.cameraPos;
+        const math::Vec3 db = b.position - s.cameraPos;
+        return da.dot(da) < db.dot(db);
+    });
+    if (s.locals.size() > kMaxLocalLights)
+        s.locals.resize(kMaxLocalLights);
+
+    Tile tiles[kMaxTiles];
+    bool tileUsed[kMaxTiles] = {};
+    int firstTile[kMaxLocalLights];
+    for (int& f : firstTile)
+        f = -1;
+
+    s.shadowsActive = s.light.shadows && s.light.shadowOpacity > 0.f && s.light.direction.length() > 1e-4f;
+    if (s.shadowsActive)
     {
-        s.buildLightMatrix();
-        if (render::Device::instance().beginShadowPass())
+        tiles[0]    = s.buildLightMatrix();
+        tileUsed[0] = true;
+    }
+
+    int nextSlot = 0;
+    for (std::size_t i = 0; i < s.locals.size(); ++i)
+    {
+        const LocalLight& l = s.locals[i];
+        if (!l.shadows || !(l.shadowOpacity > 0.f))
+            continue;
+        const bool spot = l.type == LightType::Spot;
+        const int need  = spot ? 1 : 6;
+        if (nextSlot + need > kLocalTileSlots)
+            continue;
+        firstTile[i] = 1 + nextSlot;
+        const float nearZ = std::max(0.05f, l.range * 0.01f);
+        for (int f = 0; f < need; ++f)
         {
-            for (const Command& c : s.commands)
-                if (c.style.castShadow && c.style.color.a >= kOpaqueAlpha)
-                    s.emitDepth(c);
-            s.flush();
-            render::Device::instance().endShadowPass();
-            s.shadowsActive = true;
+            const int index = firstTile[i] + f;
+            const int slot  = nextSlot + f;
+            Tile& t         = tiles[index];
+            tileUsed[index] = true;
+            t.size          = kLocalTileSize;
+            if (slot < 4)
+            {
+                t.x = 2048 + static_cast<std::uint32_t>(slot % 2) * kLocalTileSize;
+                t.y = static_cast<std::uint32_t>(slot / 2) * kLocalTileSize;
+            }
+            else
+            {
+                t.x = static_cast<std::uint32_t>((slot - 4) % 4) * kLocalTileSize;
+                t.y = 2048 + static_cast<std::uint32_t>((slot - 4) / 4) * kLocalTileSize;
+            }
+
+            math::Vec3 dir;
+            math::Vec3 up = {0.f, 1.f, 0.f};
+            float fov     = 90.f;
+            if (spot)
+            {
+                dir = l.direction.length() > 1e-5f ? l.direction.normalized() : math::Vec3{0.f, -1.f, 0.f};
+                if (std::fabs(dir.y) > 0.95f)
+                    up = {0.f, 0.f, 1.f};
+                fov = std::min(2.f * l.outerAngleDegrees + 4.f, 170.f);
+            }
+            else
+            {
+                static const math::Vec3 kDirs[6] = {{1.f, 0.f, 0.f}, {-1.f, 0.f, 0.f}, {0.f, 1.f, 0.f},
+                                                    {0.f, -1.f, 0.f}, {0.f, 0.f, 1.f}, {0.f, 0.f, -1.f}};
+                dir = kDirs[f];
+                if (f == 2 || f == 3)
+                    up = {0.f, 0.f, 1.f};
+            }
+            const float tanHalf = std::tan(fov * 0.5f * (3.14159265358979323846f / 180.f));
+            t.viewProj     = math::Mat4::perspective(fov, 1.f, nearZ, l.range) *
+                         math::Mat4::lookAt(l.position, l.position + dir, up);
+            t.normalOffset = 1.5f * 2.f * tanHalf / static_cast<float>(kLocalTileSize);
+            t.bias         = std::max(0.02f, l.range * 0.002f);
+            t.nearZ        = nearZ;
+            t.farZ         = l.range;
+        }
+        nextSlot += need;
+    }
+
+    bool anyTile = false;
+    for (int i = 0; i < kMaxTiles; ++i)
+        anyTile = anyTile || tileUsed[i];
+
+    if (anyTile)
+    {
+        bool anyLocal = false;
+        for (int i = 1; i < kMaxTiles; ++i)
+            anyLocal = anyLocal || tileUsed[i];
+        if (anyLocal)
+            for (Command& c : s.commands)
+                if (c.style.castShadow && !isTranslucent(c.style))
+                    s.ensureBounds(c);
+
+        if (device.beginShadowPass())
+        {
+            for (int i = 0; i < kMaxTiles; ++i)
+            {
+                if (!tileUsed[i])
+                    continue;
+                device.setShadowViewport(tiles[i].x, tiles[i].y, tiles[i].size, tiles[i].size);
+
+                math::Vec3 lightCenter = math::Vec3::zero();
+                float lightRange       = 0.f;
+                if (i > 0)
+                {
+                    for (std::size_t k = 0; k < s.locals.size(); ++k)
+                    {
+                        const int first = firstTile[k];
+                        const int count = s.locals[k].type == LightType::Spot ? 1 : 6;
+                        if (first >= 0 && i >= first && i < first + count)
+                        {
+                            lightCenter = s.locals[k].position;
+                            lightRange  = s.locals[k].range;
+                        }
+                    }
+                }
+
+                for (const Command& c : s.commands)
+                {
+                    if (!c.style.castShadow || isTranslucent(c.style))
+                        continue;
+                    if (i > 0)
+                    {
+                        const math::Vec3 d = c.center - lightCenter;
+                        const float reach  = lightRange + c.radius;
+                        if (d.dot(d) > reach * reach)
+                            continue;
+                    }
+                    s.emitDepth(c, tiles[i].viewProj);
+                }
+                s.flush();
+            }
+            device.endShadowPass();
+        }
+        else
+        {
+            s.shadowsActive = false;
+            for (int& f : firstTile)
+                f = -1;
         }
     }
 
-    render::Device::instance().setViewport(s.viewportX, s.viewportY, s.viewportWidth, s.viewportHeight);
+    SceneBlock block{};
+    block.head[0] = static_cast<float>(1 + s.locals.size());
+    block.head[1] = s.light.ambient;
+    block.head[2] = s.shadowsActive ? s.light.shadowOpacity : 0.f;
+    block.head[3] = static_cast<float>(device.shadowAtlasSize());
+    block.camPos[0] = s.cameraPos.x;
+    block.camPos[1] = s.cameraPos.y;
+    block.camPos[2] = s.cameraPos.z;
 
-    for (const Command& c : s.commands)
-        if (c.style.color.a >= kOpaqueAlpha)
-            s.emit(c, s.opaquePipeline);
+    const float atlas = static_cast<float>(device.shadowAtlasSize());
+    for (int i = 0; i < kMaxTiles; ++i)
+    {
+        const Tile& t = tiles[i];
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                block.tileMat[i][c * 4 + r] = t.viewProj.m[r][c];
+        block.tileRect[i][0]  = static_cast<float>(t.x) / atlas;
+        block.tileRect[i][1]  = static_cast<float>(t.y) / atlas;
+        block.tileRect[i][2]  = static_cast<float>(t.size) / atlas;
+        block.tileRect[i][3]  = static_cast<float>(t.size) / atlas;
+        block.tileParam[i][0] = t.normalOffset;
+        block.tileParam[i][1] = t.bias;
+        block.tileParam[i][2] = t.nearZ;
+        block.tileParam[i][3] = t.farZ;
+    }
+
+    const bool dirOn = s.light.direction.length() > 1e-4f;
+    block.lightPos[0][0] = s.toLight.x;
+    block.lightPos[0][1] = s.toLight.y;
+    block.lightPos[0][2] = s.toLight.z;
+    block.lightPos[0][3] = dirOn ? 1.f : 0.f;
+    block.lightMisc[0][0] = s.shadowsActive ? 0.f : -1.f;
+    block.lightMisc[0][2] = s.light.shadowOpacity;
+
+    for (std::size_t i = 0; i < s.locals.size(); ++i)
+    {
+        const LocalLight& l = s.locals[i];
+        const std::size_t k = i + 1;
+        const bool spot     = l.type == LightType::Spot;
+        block.lightPos[k][0] = l.position.x;
+        block.lightPos[k][1] = l.position.y;
+        block.lightPos[k][2] = l.position.z;
+        block.lightPos[k][3] = spot ? 3.f : 2.f;
+        block.lightColor[k][0] = l.color.r * l.intensity;
+        block.lightColor[k][1] = l.color.g * l.intensity;
+        block.lightColor[k][2] = l.color.b * l.intensity;
+        block.lightColor[k][3] = l.range;
+        const math::Vec3 dir = l.direction.length() > 1e-5f ? l.direction.normalized() : math::Vec3{0.f, -1.f, 0.f};
+        constexpr float kRad = 3.14159265358979323846f / 180.f;
+        const float outer    = std::clamp(l.outerAngleDegrees, 1.f, 89.f) * kRad;
+        const float inner    = std::clamp(l.innerAngleDegrees * kRad, 0.f, outer - 0.01f);
+        block.lightDir[k][0] = dir.x;
+        block.lightDir[k][1] = dir.y;
+        block.lightDir[k][2] = dir.z;
+        block.lightDir[k][3] = std::cos(outer);
+        block.lightMisc[k][0] = static_cast<float>(firstTile[i]);
+        block.lightMisc[k][1] = std::cos(inner);
+        block.lightMisc[k][2] = std::clamp(l.shadowOpacity, 0.f, 1.f);
+    }
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            block.viewProj[c * 4 + r] = s.viewProj.m[r][c];
+    device.bindUniformBlock(&block, sizeof(block));
+
+    device.setViewport(s.viewportX, s.viewportY, s.viewportWidth, s.viewportHeight);
+
+    s.frustum.build(s.viewProj);
+    s.culled    = 0;
+    s.instanced = 0;
+    std::vector<Command*> candidates;
+    for (Command& c : s.commands)
+    {
+        if (isTranslucent(c.style) || !s.visible(c))
+            continue;
+        if (Impl::instanceable(c))
+            candidates.push_back(&c);
+        else
+            s.emit(c, c.style.doubleSided ? s.opaqueTwoSided : s.opaquePipeline);
+    }
+    s.flush();
+    std::stable_sort(candidates.begin(), candidates.end(),
+                     [](const Command* a, const Command* b) { return Impl::groupKey(*a) < Impl::groupKey(*b); });
+    for (std::size_t begin = 0; begin < candidates.size();)
+    {
+        std::size_t end = begin + 1;
+        while (end < candidates.size() && Impl::groupKey(*candidates[end]) == Impl::groupKey(*candidates[begin]))
+            ++end;
+        if (end - begin < 2 || !s.drawInstanced(candidates, begin, end))
+            for (std::size_t i = begin; i < end; ++i)
+                s.emit(*candidates[i], candidates[i]->style.doubleSided ? s.opaqueTwoSided : s.opaquePipeline);
+        begin = end;
+    }
     s.flush();
 
     s.emitLines(LineMode::DepthTested);
     s.flush();
 
     std::vector<const Command*> translucent;
-    for (const Command& c : s.commands)
-        if (c.style.color.a < kOpaqueAlpha)
+    for (Command& c : s.commands)
+        if (isTranslucent(c.style) && s.visible(c))
             translucent.push_back(&c);
     std::stable_sort(translucent.begin(), translucent.end(),
                      [](const Command* a, const Command* b) { return a->distanceSq > b->distanceSq; });
     for (const Command* c : translucent)
-        s.emit(*c, s.translucentPipeline);
+        s.emit(*c, c->style.doubleSided ? s.translucentTwoSided : s.translucentPipeline);
     s.flush();
 
     s.emitLines(LineMode::Overlay);
@@ -507,6 +1141,7 @@ void Renderer3D::end()
 
     s.commands.clear();
     s.lines.clear();
+    s.locals.clear();
 }
 
 }

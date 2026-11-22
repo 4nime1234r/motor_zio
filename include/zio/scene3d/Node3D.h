@@ -12,6 +12,7 @@
 #include "zio/renderer/Color.h"
 #include "zio/renderer/Texture.h"
 #include "zio/scene3d/Mesh.h"
+#include "zio/scene3d/Renderer3D.h"
 #include "zio/scripting/Script.h"
 
 namespace zio::scene3d
@@ -42,6 +43,10 @@ public:
 
     void setVisible(bool visible) { visible_ = visible; }
     bool isVisible() const { return visible_; }
+
+    void markForDestroy() { destroyPending_ = true; }
+    bool destroyPending() const { return destroyPending_; }
+    std::size_t removeDestroyed();
 
     Node3D* addChild(std::unique_ptr<Node3D> child);
     template <typename NodeT, typename... Args>
@@ -78,6 +83,7 @@ public:
     std::vector<std::string> scriptNames() const;
     const std::vector<ScriptSlot>& scripts() const { return scripts_; }
     void runScripts(float dt);
+    void releaseScripts();
 
     void visit(Renderer3D& renderer);
 
@@ -94,6 +100,7 @@ private:
     math::Quaternion rotation_  = math::Quaternion::identity();
     math::Vec3 scale_           = math::Vec3::one();
     bool visible_               = true;
+    bool destroyPending_        = false;
     math::Mat4 worldMatrix_     = math::Mat4::identity();
 };
 
@@ -106,11 +113,7 @@ public:
     bool setMeshSource(std::string source, std::string* error = nullptr);
     const std::string& meshSource() const { return meshSource_; }
 
-    void setMesh(std::shared_ptr<Mesh> mesh)
-    {
-        mesh_ = std::move(mesh);
-        meshSource_.clear();
-    }
+    void setMesh(std::shared_ptr<Mesh> mesh);
     const std::shared_ptr<Mesh>& mesh() const { return mesh_; }
 
     void setColor(renderer::Color color) { color_ = color; }
@@ -125,6 +128,14 @@ public:
 
     void setCastShadow(bool cast) { castShadow_ = cast; }
     bool castShadow() const { return castShadow_; }
+
+    std::size_t morphTargetCount() const { return mesh_ ? mesh_->morphTargets.size() : 0; }
+    const std::string& morphTargetName(std::size_t index) const;
+    void setMorphWeight(std::size_t index, float weight);
+    float morphWeight(std::size_t index) const { return index < morphWeights_.size() ? morphWeights_[index] : 0.f; }
+
+    std::size_t addFileLights();
+    bool fileCamera(std::size_t index, Camera& out) const;
 
     bool hasSkeleton() const { return mesh_ && mesh_->skin; }
     std::vector<std::string> animationNames() const;
@@ -151,6 +162,20 @@ private:
     renderer::Color color_ = renderer::Color::white();
     std::string texturePath_;
     std::shared_ptr<renderer::Texture> texture_;
+    std::vector<std::shared_ptr<renderer::Texture>> partTextures_;
+    struct MaterialTextures
+    {
+        std::shared_ptr<renderer::Texture> normal;
+        std::shared_ptr<renderer::Texture> metallicRoughness;
+        std::shared_ptr<renderer::Texture> emissive;
+        std::shared_ptr<renderer::Texture> occlusion;
+    };
+    std::vector<MaterialTextures> materialTextures_;
+    std::vector<float> morphWeights_;
+    std::shared_ptr<Mesh> morphed_;
+    void applyMorph();
+    void loadPartTextures();
+    void applyMaterial(MeshStyle& style, const Material& material, const MaterialTextures& textures) const;
     math::Vec2 uvScale_ = math::Vec2::one();
     bool castShadow_    = true;
 
@@ -166,6 +191,62 @@ private:
     float animSpeed_   = 1.f;
     bool animPlaying_  = false;
     bool animLoop_     = true;
+};
+
+class ZIO_API PrefabNode final : public Node3D
+{
+public:
+    PrefabNode() = default;
+
+    bool setSource(std::string source, std::string* error = nullptr);
+    const std::string& source() const { return source_; }
+    bool reload(std::string* error = nullptr);
+
+private:
+    std::string source_;
+};
+
+class ZIO_API LightNode final : public Node3D
+{
+public:
+    LightNode() = default;
+
+    void setLightType(LightType type) { type_ = type; }
+    LightType lightType() const { return type_; }
+
+    void setColor(renderer::Color color) { color_ = color; }
+    renderer::Color color() const { return color_; }
+
+    void setIntensity(float intensity) { intensity_ = intensity; }
+    float intensity() const { return intensity_; }
+
+    void setRange(float range) { range_ = range; }
+    float range() const { return range_; }
+
+    void setInnerAngle(float degrees) { inner_ = degrees; }
+    float innerAngle() const { return inner_; }
+
+    void setOuterAngle(float degrees) { outer_ = degrees; }
+    float outerAngle() const { return outer_; }
+
+    void setCastShadow(bool cast) { castShadow_ = cast; }
+    bool castShadow() const { return castShadow_; }
+
+    void setShadowOpacity(float opacity) { shadowOpacity_ = opacity; }
+    float shadowOpacity() const { return shadowOpacity_; }
+
+protected:
+    void onDraw(Renderer3D& renderer) override;
+
+private:
+    LightType type_          = LightType::Point;
+    renderer::Color color_   = renderer::Color::white();
+    float intensity_         = 1.f;
+    float range_             = 10.f;
+    float inner_             = 20.f;
+    float outer_             = 35.f;
+    bool castShadow_         = false;
+    float shadowOpacity_     = 1.f;
 };
 
 }

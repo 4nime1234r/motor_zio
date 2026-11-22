@@ -172,12 +172,42 @@ std::optional<Clip> decodeAudioFile(std::string_view path)
 
 #else
 
+#include <miniaudio.h>
+
 namespace zio::audio
 {
 
-std::optional<Clip> decodeAudioFile(std::string_view)
+std::optional<Clip> decodeAudioFile(std::string_view path)
 {
-    return std::nullopt;
+    const std::string file(path);
+    ma_decoder_config config = ma_decoder_config_init(ma_format_s16, 0, 0);
+    ma_decoder decoder;
+    if (ma_decoder_init_file(file.c_str(), &config, &decoder) != MA_SUCCESS)
+        return std::nullopt;
+
+    Clip clip;
+    clip.channels      = decoder.outputChannels;
+    clip.sampleRate    = decoder.outputSampleRate;
+    clip.bitsPerSample = 16;
+
+    constexpr ma_uint64 kChunkFrames = 4096;
+    std::vector<std::int16_t> chunk(static_cast<std::size_t>(kChunkFrames) * clip.channels);
+    for (;;)
+    {
+        ma_uint64 framesRead = 0;
+        const ma_result result = ma_decoder_read_pcm_frames(&decoder, chunk.data(), kChunkFrames, &framesRead);
+        if (framesRead > 0)
+        {
+            const auto* bytes = reinterpret_cast<const std::uint8_t*>(chunk.data());
+            clip.pcm.insert(clip.pcm.end(), bytes, bytes + framesRead * clip.channels * sizeof(std::int16_t));
+        }
+        if (result != MA_SUCCESS || framesRead < kChunkFrames)
+            break;
+    }
+    ma_decoder_uninit(&decoder);
+    if (clip.pcm.empty() || clip.channels == 0)
+        return std::nullopt;
+    return clip;
 }
 
 }

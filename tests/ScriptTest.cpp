@@ -6,6 +6,7 @@
 #include "zio/scene3d/Node3D.h"
 #include "zio/scene3d/Scene3D.h"
 #include "zio/scene3d/SceneIO3D.h"
+#include "zio/scripting/Language.h"
 #include "zio/scripting/Script.h"
 
 using namespace zio;
@@ -62,6 +63,39 @@ int main()
     check(!registry.has("NoExiste"), "un script desconocido no esta registrado");
     check(registry.create("Girar") != nullptr && registry.create("NoExiste") == nullptr, "el registro crea instancias");
     check(!registry.add("", [] { return std::unique_ptr<scripting::Script>(); }), "no se acepta un nombre vacio");
+
+    registry.setProvider(
+        "a", [] { return std::vector<std::string>{"DeA"}; },
+        [](const std::string& name) { return name == "DeA" ? std::make_unique<Otro>() : std::unique_ptr<Otro>(); });
+    registry.setProvider(
+        "b", [] { return std::vector<std::string>{"DeB"}; },
+        [](const std::string& name) { return name == "DeB" ? std::make_unique<Otro>() : std::unique_ptr<Otro>(); });
+    check(registry.has("DeA") && registry.has("DeB"), "varios proveedores conviven");
+    check(registry.create("DeA") != nullptr && registry.create("DeB") != nullptr, "cada proveedor crea lo suyo");
+    registry.removeProvider("a");
+    check(!registry.has("DeA") && registry.has("DeB"), "se puede quitar un proveedor");
+    registry.removeProvider("b");
+
+    scripting::Languages::registerBuiltin();
+    auto& languages = scripting::Languages::instance();
+    check(languages.forExtension("cpp") != nullptr && languages.forExtension("cs") != nullptr, "C++ y C# estan registrados");
+    check(languages.forExtension("CPP") == languages.forExtension("cpp"), "las extensiones no distinguen mayusculas");
+    check(!languages.isScriptExtension("lua") && !languages.isScriptExtension("txt"), "no hay mas lenguajes que los registrados");
+    check(languages.forExtension("cpp")->sourceTemplate("Jugador").find("ZIO_SCRIPT(Jugador)") != std::string::npos,
+          "la plantilla de C++ registra la clase");
+    check(languages.forExtension("cs")->sourceTemplate("Jugador").find("class Jugador : Script") != std::string::npos,
+          "la plantilla de C# hereda de Script");
+
+    {
+        Otro* alive  = nullptr;
+        auto script  = registry.create("Otro");
+        alive        = static_cast<Otro*>(script.get());
+        check(registry.inUse({"Otro"}) && alive != nullptr, "una instancia viva cuenta como en uso");
+        script.reset();
+        check(!registry.inUse({"Otro"}), "al destruirla deja de estar en uso");
+    }
+    check(registry.remove("Otro") && !registry.has("Otro"), "se puede quitar un script del registro");
+    registry.add("Otro", [] { return std::make_unique<Otro>(); });
 
     scene3d::Scene3D scene;
     auto* node = scene.root().addChild<scene3d::Node3D>();

@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <map>
 #include <mutex>
 #include <set>
 #include <cstdint>
@@ -10,12 +11,14 @@
 #include <string>
 
 #include "core/EditorContext.h"
+#include "core/GameExport.h"
 #include "ui/Panels.h"
 #include "ui/ToolButton.h"
 #include "ui/ViewportController.h"
 #include "update/Updater.h"
 #include "zio/core/Application.h"
 #include "zio/events/EventBus.h"
+#include "zio/scripting/Language.h"
 #include "zio/ui/UI.h"
 
 namespace zio_editor
@@ -36,6 +39,8 @@ public:
     void showPopup(std::vector<zio::ui::MenuItem> items, zio::ui::Vec2 position) override;
     float frameMs() const override { return frameMs_; }
     void log(const std::string& text, bool error = false) override { output_.add(text, error); }
+    void openInCodeEditor(const std::filesystem::path& path) override;
+    void scriptFileCreated(const std::string& relative) override;
 
 protected:
     bool onInit() override;
@@ -57,9 +62,17 @@ private:
     void rememberProject();
     void openInitialProject();
     void saveLayout();
-    bool ensureDotNet(std::string* error);
     void loadProjectScripts();
-    void compileCSharp();
+    void buildScripts(bool thenPlay, bool automatic, bool force);
+    void pollScripts(float dt);
+    void offerInstall(zio::scripting::ScriptLanguage* language, const std::string& problem);
+    void showCodeEditorDialog();
+    void showGameInfo();
+    void showExport();
+    void showImport();
+    void showPlayPackage();
+    void startExport(ExportRequest request);
+    std::string currentSceneRelative() const;
     void flushBuildLines();
     void previewAnimations(zio::scene3d::Node3D& node, float dt);
 
@@ -101,11 +114,27 @@ private:
     zio::ui::Label* statusRight_    = nullptr;
     zio::ui::Button* updateBadge_   = nullptr;
     bool manualCheck_               = false;
+    struct BuildJob
+    {
+        zio::scripting::ScriptLanguage* language = nullptr;
+        bool ok                                  = false;
+        std::string error;
+    };
+
     std::atomic<bool> building_{false};
+    ExportRequest exportRequest_;
+    ExportResult exportResult_;
+    std::string exportError_;
+    bool exportOk_ = false;
+    std::vector<BuildJob> jobs_;
+    bool playAfterBuild_ = false;
+    float pollTimer_     = 0.f;
+    std::set<std::string> installOffered_;
+    std::map<std::string, std::filesystem::file_time_type> failedAt_;
+    std::string codeEditor_;
+    std::filesystem::path codeEditorFile_;
     std::mutex buildMutex_;
     std::vector<std::string> buildLines_;
-    bool buildOk_ = false;
-    std::string buildError_;
     std::set<std::string> seenBuildLines_;
     UpdateState lastUpdateState_    = UpdateState::Idle;
 

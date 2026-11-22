@@ -19,11 +19,51 @@ internal unsafe struct NativeApi
     public delegate* unmanaged<int, int> isKeyDown;
     public delegate* unmanaged<int, int> isMouseDown;
     public delegate* unmanaged<float*, void> getMousePosition;
+    public delegate* unmanaged<IntPtr, int, byte*, int, IntPtr> createNode;
+    public delegate* unmanaged<IntPtr, void> destroyNode;
+    public delegate* unmanaged<IntPtr, byte*, int, IntPtr> findChild;
+    public delegate* unmanaged<IntPtr, IntPtr> getParent;
+    public delegate* unmanaged<IntPtr, int> getChildCount;
+    public delegate* unmanaged<IntPtr, int, IntPtr> getChild;
+    public delegate* unmanaged<IntPtr, int, void> setVisible;
+    public delegate* unmanaged<IntPtr, int> isVisible;
+    public delegate* unmanaged<IntPtr, byte*, int, void> setName;
+    public delegate* unmanaged<IntPtr, byte*, int, int> setMesh;
+    public delegate* unmanaged<IntPtr, float*, void> setColor;
+    public delegate* unmanaged<IntPtr, byte*, int, void> setTexture;
+    public delegate* unmanaged<IntPtr, float, float, void> setLight;
+    public delegate* unmanaged<int, int, float*, float*, float, float, float, uint> createBody;
+    public delegate* unmanaged<uint, void> destroyBody;
+    public delegate* unmanaged<uint, int> hasBody;
+    public delegate* unmanaged<uint, int, float*, void> getBodyVector;
+    public delegate* unmanaged<uint, int, float*, void> setBodyVector;
+    public delegate* unmanaged<uint, int, float*, void> applyBody;
+    public delegate* unmanaged<float*, void> getGravity;
+    public delegate* unmanaged<float*, void> setGravity;
+    public delegate* unmanaged<float*, float*, float, float*, uint*, int> raycast;
+    public delegate* unmanaged<int> contactCount;
+    public delegate* unmanaged<int, uint*, uint*, float*, int> getContact;
+    public delegate* unmanaged<byte*, int, float, float, int, int, uint> playSound;
+    public delegate* unmanaged<uint, void> stopSound;
+    public delegate* unmanaged<uint, int, float, void> setSound;
+    public delegate* unmanaged<uint, int> isSoundPlaying;
+    public delegate* unmanaged<int, float, void> setCategoryVolume;
+    public delegate* unmanaged<byte*, int, void> loadScene;
+    public delegate* unmanaged<IntPtr, byte*, int, IntPtr> instantiate;
 }
 
 internal static class Native
 {
     internal static NativeApi Api;
+
+    internal static unsafe T WithUtf8<T>(string text, Func<IntPtr, int, T> call)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(text ?? string.Empty);
+        fixed (byte* p = bytes)
+        {
+            return call((IntPtr)p, bytes.Length);
+        }
+    }
 }
 
 public static unsafe class Log

@@ -107,12 +107,39 @@ bool ensureProjectDirs(const fs::path& root, std::string* error)
     return true;
 }
 
-std::string projectFileText(std::string_view name)
+std::string projectFileText(std::string_view name, const GameInfo& game = {})
 {
     std::string out = "{\n  \"format\": ";
     zio::json::writeString(out, ProjectManager::kFormat);
     out += ",\n  \"version\": 1,\n  \"name\": ";
     zio::json::writeString(out, name);
+    const bool hasGame = !game.title.empty() || !game.author.empty() || !game.description.empty() || !game.copyright.empty() ||
+                         !game.website.empty() || !game.license.empty() || !game.id.empty() || !game.entryScene.empty() ||
+                         game.allowImport || game.version != "1.0.0";
+    if (hasGame)
+    {
+        out += ",\n  \"game\": {";
+        bool first      = true;
+        const auto text = [&](const char* key, const std::string& value) {
+            out += first ? "\n    \"" : ",\n    \"";
+            first = false;
+            out += key;
+            out += "\": ";
+            zio::json::writeString(out, value);
+        };
+        text("title", game.title);
+        text("author", game.author);
+        text("version", game.version);
+        text("description", game.description);
+        text("copyright", game.copyright);
+        text("website", game.website);
+        text("license", game.license);
+        text("id", game.id);
+        text("entryScene", game.entryScene);
+        out += ",\n    \"allowImport\": ";
+        out += game.allowImport ? "true" : "false";
+        out += "\n  }";
+    }
     out += "\n}\n";
     return out;
 }
@@ -341,9 +368,63 @@ bool ProjectManager::loadProject(const fs::path& path, std::string* error)
     if (!ensureProjectDirs(root, error))
         return false;
 
+    GameInfo game;
+    if (const zio::json::Value* gameValue = doc.find("game"))
+    {
+        const auto read = [&](const char* key, std::string& target) {
+            if (const zio::json::Value* field = gameValue->find(key))
+                if (const auto* text = std::get_if<std::string>(&field->v))
+                    target = text->substr(0, 4096);
+        };
+        read("title", game.title);
+        read("author", game.author);
+        read("version", game.version);
+        read("description", game.description);
+        read("copyright", game.copyright);
+        read("website", game.website);
+        read("license", game.license);
+        read("id", game.id);
+        read("entryScene", game.entryScene);
+        if (const zio::json::Value* field = gameValue->find("allowImport"))
+            if (const auto* flag = std::get_if<bool>(&field->v))
+                game.allowImport = *flag;
+    }
+
     root_ = root;
     name_ = *nameText;
+    game_ = std::move(game);
     open_ = true;
+    return true;
+}
+
+bool ProjectManager::saveGameInfo(const GameInfo& info, std::string* error)
+{
+    if (!open_)
+    {
+        setError(error, "No hay un proyecto abierto.");
+        return false;
+    }
+    const fs::path file = root_ / kProjectFile;
+    const fs::path temp = file.string() + ".tmp";
+    const std::string text = projectFileText(name_, info);
+    {
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        out.write(text.data(), static_cast<std::streamsize>(text.size()));
+        if (!out)
+        {
+            setError(error, "No se pudo escribir " + temp.string());
+            return false;
+        }
+    }
+    std::error_code ec;
+    fs::remove(file, ec);
+    fs::rename(temp, file, ec);
+    if (ec)
+    {
+        setError(error, "No se pudo guardar " + file.string());
+        return false;
+    }
+    game_ = info;
     return true;
 }
 
@@ -352,6 +433,7 @@ void ProjectManager::close()
     open_ = false;
     name_.clear();
     root_.clear();
+    game_ = GameInfo{};
 }
 
 std::optional<fs::path> ProjectManager::resolve(std::string_view relative) const

@@ -131,6 +131,9 @@ struct Window::Impl
     bool haveLastMouse      = false;
 
     bool minimized = false;
+    WindowMode windowMode = WindowMode::Windowed;
+    WINDOWPLACEMENT savedPlacement{};
+    LONG_PTR savedStyle = 0;
     CursorShape cursorShape = CursorShape::Arrow;
     char32_t pendingHighSurrogate = 0;
 
@@ -321,6 +324,8 @@ struct Window::Impl
                 minimized = false;
                 width     = LOWORD(lParam);
                 height    = HIWORD(lParam);
+                if (windowMode != WindowMode::Fullscreen)
+                    windowMode = wParam == SIZE_MAXIMIZED ? WindowMode::Maximized : WindowMode::Windowed;
             }
             return 0;
 
@@ -407,11 +412,60 @@ struct Window::Impl
             hwnd = nullptr;
         }
         width = height = notifiedWidth = notifiedHeight = 0;
-        minimized = false;
+        minimized  = false;
+        windowMode = WindowMode::Windowed;
         heldKeys.clear();
         for (bool& held : mouseButtonHeld)
             held = false;
         capturedButtonCount = 0;
+    }
+
+    void leaveFullscreen()
+    {
+        SetWindowLongPtrW(hwnd, GWL_STYLE, savedStyle);
+        SetWindowPlacement(hwnd, &savedPlacement);
+        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        windowMode = WindowMode::Windowed;
+    }
+
+    bool setMode(WindowMode target)
+    {
+        if (!hwnd)
+            return false;
+        if (target == windowMode)
+            return true;
+
+        if (target == WindowMode::Fullscreen)
+        {
+            savedStyle = GetWindowLongPtrW(hwnd, GWL_STYLE);
+            savedPlacement.length = sizeof(savedPlacement);
+            GetWindowPlacement(hwnd, &savedPlacement);
+            MONITORINFO info{};
+            info.cbSize = sizeof(info);
+            if (!GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &info))
+                return false;
+            SetWindowLongPtrW(hwnd, GWL_STYLE, (savedStyle & ~static_cast<LONG_PTR>(WS_OVERLAPPEDWINDOW)) | WS_POPUP);
+            SetWindowPos(hwnd, HWND_TOP, info.rcMonitor.left, info.rcMonitor.top,
+                         info.rcMonitor.right - info.rcMonitor.left, info.rcMonitor.bottom - info.rcMonitor.top,
+                         SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+            windowMode = WindowMode::Fullscreen;
+            return true;
+        }
+
+        if (windowMode == WindowMode::Fullscreen)
+            leaveFullscreen();
+        if (target == WindowMode::Maximized)
+        {
+            ShowWindow(hwnd, SW_MAXIMIZE);
+            windowMode = WindowMode::Maximized;
+        }
+        else
+        {
+            ShowWindow(hwnd, SW_RESTORE);
+            windowMode = WindowMode::Windowed;
+        }
+        return true;
     }
 };
 
@@ -500,6 +554,51 @@ void Window::setCursor(CursorShape shape)
     }
 }
 
+void Window::setTitle(std::string_view title)
+{
+    if (!impl_->hwnd)
+        return;
+    const std::string text(title);
+    const int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+    if (size <= 0)
+        return;
+    std::wstring wide(static_cast<std::size_t>(size), 0);
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), size);
+    SetWindowTextW(impl_->hwnd, wide.c_str());
+}
+
+bool Window::setMode(WindowMode mode)
+{
+    return impl_->setMode(mode);
+}
+
+WindowMode Window::mode() const
+{
+    return impl_->windowMode;
+}
+
+bool Window::isFullscreen() const
+{
+    return impl_->windowMode == WindowMode::Fullscreen;
+}
+
+bool Window::toggleFullscreen()
+{
+    return impl_->setMode(impl_->windowMode == WindowMode::Fullscreen ? WindowMode::Windowed : WindowMode::Fullscreen);
+}
+
+bool Window::setSize(std::uint32_t width, std::uint32_t height)
+{
+    if (!impl_->hwnd || width == 0 || height == 0)
+        return false;
+    if (impl_->windowMode != WindowMode::Windowed && !impl_->setMode(WindowMode::Windowed))
+        return false;
+    RECT rect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+    AdjustWindowRect(&rect, Impl::kStyle, FALSE);
+    return SetWindowPos(impl_->hwnd, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
+                        SWP_NOMOVE | SWP_NOZORDER | SWP_NOOWNERZORDER) != 0;
+}
+
 void* Window::nativeHandle() const
 {
     return impl_->hwnd;
@@ -519,15 +618,356 @@ std::uint32_t Window::height() const
 
 #else
 
+#include <algorithm>
+#include <vector>
+
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+
+#include "zio/events/EventBus.h"
+#include "zio/events/Types.h"
+
 namespace zio::platform
 {
 
+namespace
+{
+
+events::KeyCode translateKey(int key)
+{
+    using events::KeyCode;
+    switch (key)
+    {
+    case GLFW_KEY_LEFT_SHIFT:
+        return KeyCode::LeftShift;
+    case GLFW_KEY_RIGHT_SHIFT:
+        return KeyCode::RightShift;
+    case GLFW_KEY_LEFT_CONTROL:
+        return KeyCode::LeftCtrl;
+    case GLFW_KEY_RIGHT_CONTROL:
+        return KeyCode::RightCtrl;
+    case GLFW_KEY_LEFT_ALT:
+        return KeyCode::LeftAlt;
+    case GLFW_KEY_RIGHT_ALT:
+        return KeyCode::RightAlt;
+    case GLFW_KEY_ESCAPE:
+        return KeyCode::Escape;
+    case GLFW_KEY_TAB:
+        return KeyCode::Tab;
+    case GLFW_KEY_ENTER:
+    case GLFW_KEY_KP_ENTER:
+        return KeyCode::Enter;
+    case GLFW_KEY_BACKSPACE:
+        return KeyCode::Backspace;
+    case GLFW_KEY_SPACE:
+        return KeyCode::Space;
+    case GLFW_KEY_DELETE:
+        return KeyCode::Delete;
+    case GLFW_KEY_INSERT:
+        return KeyCode::Insert;
+    case GLFW_KEY_CAPS_LOCK:
+        return KeyCode::CapsLock;
+    case GLFW_KEY_HOME:
+        return KeyCode::Home;
+    case GLFW_KEY_END:
+        return KeyCode::End;
+    case GLFW_KEY_PAGE_UP:
+        return KeyCode::PageUp;
+    case GLFW_KEY_PAGE_DOWN:
+        return KeyCode::PageDown;
+    case GLFW_KEY_LEFT:
+        return KeyCode::Left;
+    case GLFW_KEY_RIGHT:
+        return KeyCode::Right;
+    case GLFW_KEY_UP:
+        return KeyCode::Up;
+    case GLFW_KEY_DOWN:
+        return KeyCode::Down;
+    case GLFW_KEY_MINUS:
+        return KeyCode::Minus;
+    case GLFW_KEY_EQUAL:
+        return KeyCode::Equal;
+    case GLFW_KEY_LEFT_BRACKET:
+        return KeyCode::LeftBracket;
+    case GLFW_KEY_RIGHT_BRACKET:
+        return KeyCode::RightBracket;
+    case GLFW_KEY_BACKSLASH:
+        return KeyCode::BackSlash;
+    case GLFW_KEY_SEMICOLON:
+        return KeyCode::Semicolon;
+    case GLFW_KEY_APOSTROPHE:
+        return KeyCode::Apostrophe;
+    case GLFW_KEY_GRAVE_ACCENT:
+        return KeyCode::Grave;
+    case GLFW_KEY_COMMA:
+        return KeyCode::Comma;
+    case GLFW_KEY_PERIOD:
+        return KeyCode::Period;
+    case GLFW_KEY_SLASH:
+        return KeyCode::Slash;
+    default:
+        break;
+    }
+    if (key >= GLFW_KEY_A && key <= GLFW_KEY_Z)
+        return static_cast<KeyCode>(static_cast<int>(KeyCode::A) + (key - GLFW_KEY_A));
+    if (key >= GLFW_KEY_0 && key <= GLFW_KEY_9)
+        return static_cast<KeyCode>(static_cast<int>(KeyCode::Num0) + (key - GLFW_KEY_0));
+    if (key >= GLFW_KEY_F1 && key <= GLFW_KEY_F12)
+        return static_cast<KeyCode>(static_cast<int>(KeyCode::F1) + (key - GLFW_KEY_F1));
+    return KeyCode::Unknown;
+}
+
+}
+
 struct Window::Impl
 {
+    static constexpr int kMinClientWidth  = 320;
+    static constexpr int kMinClientHeight = 240;
+
+    GLFWwindow* window   = nullptr;
+    std::uint32_t width  = 0;
+    std::uint32_t height = 0;
+    std::uint32_t notifiedWidth  = 0;
+    std::uint32_t notifiedHeight = 0;
+    bool closeRequested = false;
+    bool minimized      = false;
+    float lastMouseX    = 0.f;
+    float lastMouseY    = 0.f;
+    bool haveLastMouse  = false;
+    CursorShape cursorShape = CursorShape::Arrow;
+    GLFWcursor* cursors[5]  = {};
+    std::vector<events::KeyCode> heldKeys;
+    bool mouseButtonHeld[5] = {};
+    bool fullscreen         = false;
+    int savedX = 0, savedY = 0, savedW = 0, savedH = 0;
+
+    WindowMode currentMode() const
+    {
+        if (fullscreen)
+            return WindowMode::Fullscreen;
+        return window && glfwGetWindowAttrib(window, GLFW_MAXIMIZED) ? WindowMode::Maximized : WindowMode::Windowed;
+    }
+
+    bool setMode(WindowMode target)
+    {
+        if (!window)
+            return false;
+        if (target == WindowMode::Fullscreen)
+        {
+            if (fullscreen)
+                return true;
+            GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+            const GLFWvidmode* video = monitor ? glfwGetVideoMode(monitor) : nullptr;
+            if (!video)
+                return false;
+            glfwGetWindowPos(window, &savedX, &savedY);
+            glfwGetWindowSize(window, &savedW, &savedH);
+            glfwSetWindowMonitor(window, monitor, 0, 0, video->width, video->height, video->refreshRate);
+            fullscreen = true;
+            return true;
+        }
+        if (fullscreen)
+        {
+            glfwSetWindowMonitor(window, nullptr, savedX, savedY, savedW > 0 ? savedW : 1280,
+                                 savedH > 0 ? savedH : 720, 0);
+            fullscreen = false;
+        }
+        if (target == WindowMode::Maximized)
+            glfwMaximizeWindow(window);
+        else
+            glfwRestoreWindow(window);
+        return true;
+    }
+
+    static Impl* self(GLFWwindow* window) { return static_cast<Impl*>(glfwGetWindowUserPointer(window)); }
+
+    static events::MouseButton translateButton(int button, bool& valid)
+    {
+        valid = true;
+        switch (button)
+        {
+        case GLFW_MOUSE_BUTTON_LEFT:
+            return events::MouseButton::Left;
+        case GLFW_MOUSE_BUTTON_RIGHT:
+            return events::MouseButton::Right;
+        case GLFW_MOUSE_BUTTON_MIDDLE:
+            return events::MouseButton::Middle;
+        case GLFW_MOUSE_BUTTON_4:
+            return events::MouseButton::Extra1;
+        case GLFW_MOUSE_BUTTON_5:
+            return events::MouseButton::Extra2;
+        default:
+            valid = false;
+            return events::MouseButton::Left;
+        }
+    }
+
+    static void onClose(GLFWwindow* w)
+    {
+        self(w)->closeRequested = true;
+        glfwSetWindowShouldClose(w, GLFW_FALSE);
+    }
+
+    static void onKey(GLFWwindow* w, int key, int, int action, int)
+    {
+        Impl* me                     = self(w);
+        const events::KeyCode code = translateKey(key);
+        auto& bus                    = events::EventBus::instance();
+        if (action == GLFW_RELEASE)
+        {
+            me->heldKeys.erase(std::remove(me->heldKeys.begin(), me->heldKeys.end(), code), me->heldKeys.end());
+            bus.postKey(code, false, false);
+            return;
+        }
+        if (code != events::KeyCode::Unknown &&
+            std::find(me->heldKeys.begin(), me->heldKeys.end(), code) == me->heldKeys.end())
+            me->heldKeys.push_back(code);
+        bus.postKey(code, true, action == GLFW_REPEAT);
+    }
+
+    static void onChar(GLFWwindow*, unsigned int codepoint)
+    {
+        if (codepoint >= 32 && codepoint != 127)
+            events::EventBus::instance().postText(static_cast<char32_t>(codepoint));
+    }
+
+    static void onMouseButton(GLFWwindow* w, int button, int action, int)
+    {
+        bool valid = false;
+        const events::MouseButton mapped = translateButton(button, valid);
+        if (!valid)
+            return;
+        Impl* me        = self(w);
+        const bool down = action == GLFW_PRESS;
+        me->mouseButtonHeld[static_cast<std::size_t>(mapped)] = down;
+        events::EventBus::instance().postMouseButton(mapped, me->lastMouseX, me->lastMouseY, down);
+    }
+
+    static void onCursor(GLFWwindow* w, double x, double y)
+    {
+        Impl* me       = self(w);
+        const float fx = static_cast<float>(x);
+        const float fy = static_cast<float>(y);
+        const float dx = me->haveLastMouse ? fx - me->lastMouseX : 0.f;
+        const float dy = me->haveLastMouse ? fy - me->lastMouseY : 0.f;
+        me->lastMouseX   = fx;
+        me->lastMouseY   = fy;
+        me->haveLastMouse = true;
+        events::EventBus::instance().postMouseMove(fx, fy, dx, dy);
+    }
+
+    static void onScroll(GLFWwindow* w, double xOffset, double yOffset)
+    {
+        Impl* me = self(w);
+        events::EventBus::instance().postMouseScroll(me->lastMouseX, me->lastMouseY, static_cast<float>(xOffset),
+                                                     static_cast<float>(yOffset));
+    }
+
+    static void onFramebuffer(GLFWwindow* w, int newWidth, int newHeight)
+    {
+        Impl* me = self(w);
+        if (newWidth <= 0 || newHeight <= 0)
+            return;
+        me->width  = static_cast<std::uint32_t>(newWidth);
+        me->height = static_cast<std::uint32_t>(newHeight);
+    }
+
+    static void onIconify(GLFWwindow* w, int iconified)
+    {
+        self(w)->minimized = iconified != 0;
+    }
+
+    static void onFocus(GLFWwindow* w, int focused)
+    {
+        if (focused)
+            return;
+        Impl* me  = self(w);
+        auto& bus = events::EventBus::instance();
+        for (events::KeyCode code : me->heldKeys)
+            bus.postKey(code, false, false);
+        me->heldKeys.clear();
+        for (std::size_t i = 0; i < 5; ++i)
+            if (me->mouseButtonHeld[i])
+            {
+                me->mouseButtonHeld[i] = false;
+                bus.postMouseButton(static_cast<events::MouseButton>(i), me->lastMouseX, me->lastMouseY, false);
+            }
+    }
+
+    bool create(std::string_view title, std::uint32_t w, std::uint32_t h)
+    {
+        static bool initialized = false;
+        if (!initialized)
+        {
+            if (!glfwInit())
+                return false;
+            initialized = true;
+        }
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        window = glfwCreateWindow(static_cast<int>(w), static_cast<int>(h), std::string(title).c_str(), nullptr, nullptr);
+        if (!window)
+            return false;
+
+        glfwSetWindowUserPointer(window, this);
+        glfwSetWindowSizeLimits(window, kMinClientWidth, kMinClientHeight, GLFW_DONT_CARE, GLFW_DONT_CARE);
+        glfwSetWindowCloseCallback(window, &Impl::onClose);
+        glfwSetKeyCallback(window, &Impl::onKey);
+        glfwSetCharCallback(window, &Impl::onChar);
+        glfwSetMouseButtonCallback(window, &Impl::onMouseButton);
+        glfwSetCursorPosCallback(window, &Impl::onCursor);
+        glfwSetScrollCallback(window, &Impl::onScroll);
+        glfwSetFramebufferSizeCallback(window, &Impl::onFramebuffer);
+        glfwSetWindowIconifyCallback(window, &Impl::onIconify);
+        glfwSetWindowFocusCallback(window, &Impl::onFocus);
+
+        cursors[static_cast<int>(CursorShape::Arrow)]            = glfwCreateStandardCursor(GLFW_ARROW_CURSOR);
+        cursors[static_cast<int>(CursorShape::IBeam)]            = glfwCreateStandardCursor(GLFW_IBEAM_CURSOR);
+        cursors[static_cast<int>(CursorShape::ResizeHorizontal)] = glfwCreateStandardCursor(GLFW_HRESIZE_CURSOR);
+        cursors[static_cast<int>(CursorShape::ResizeVertical)]   = glfwCreateStandardCursor(GLFW_VRESIZE_CURSOR);
+        cursors[static_cast<int>(CursorShape::Hand)]             = glfwCreateStandardCursor(GLFW_HAND_CURSOR);
+
+        int fbWidth = 0, fbHeight = 0;
+        glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+        width          = fbWidth > 0 ? static_cast<std::uint32_t>(fbWidth) : w;
+        height         = fbHeight > 0 ? static_cast<std::uint32_t>(fbHeight) : h;
+        notifiedWidth  = width;
+        notifiedHeight = height;
+        minimized      = false;
+        closeRequested = false;
+        haveLastMouse  = false;
+        heldKeys.clear();
+        for (bool& held : mouseButtonHeld)
+            held = false;
+        return true;
+    }
+
+    void destroy()
+    {
+        if (window)
+        {
+            for (GLFWcursor*& cursor : cursors)
+                if (cursor)
+                {
+                    glfwDestroyCursor(cursor);
+                    cursor = nullptr;
+                }
+            glfwDestroyWindow(window);
+            window     = nullptr;
+            fullscreen = false;
+        }
+        width = height = notifiedWidth = notifiedHeight = 0;
+        minimized                                      = false;
+        heldKeys.clear();
+        for (bool& held : mouseButtonHeld)
+            held = false;
+    }
 };
 
 Window::Window() : impl_(std::make_unique<Impl>()) {}
-Window::~Window() = default;
+Window::~Window()
+{
+    destroy();
+}
 
 Window& Window::instance()
 {
@@ -535,54 +975,114 @@ Window& Window::instance()
     return global;
 }
 
-bool Window::create(std::string_view, std::uint32_t, std::uint32_t)
+bool Window::create(std::string_view title, std::uint32_t width, std::uint32_t height)
 {
-    return false;
+    destroy();
+    return impl_->create(title, width, height);
 }
 
-void Window::destroy() {}
+void Window::destroy()
+{
+    impl_->destroy();
+}
 
 bool Window::isOpen() const
 {
-    return false;
+    return impl_->window != nullptr;
 }
 
-void Window::pumpMessages() {}
+void Window::pumpMessages()
+{
+    if (impl_->window)
+        glfwPollEvents();
+}
 
-void Window::cancelClose() {}
+void Window::cancelClose()
+{
+    impl_->closeRequested = false;
+}
 
 bool Window::closeRequested() const
 {
-    return false;
+    return impl_->closeRequested;
 }
 
 bool Window::isMinimized() const
 {
-    return false;
+    return impl_->minimized;
 }
 
-bool Window::consumeResize(std::uint32_t&, std::uint32_t&)
+bool Window::consumeResize(std::uint32_t& outWidth, std::uint32_t& outHeight)
 {
-    return false;
+    if (impl_->minimized)
+        return false;
+    if (impl_->width == impl_->notifiedWidth && impl_->height == impl_->notifiedHeight)
+        return false;
+    outWidth              = impl_->width;
+    outHeight             = impl_->height;
+    impl_->notifiedWidth  = impl_->width;
+    impl_->notifiedHeight = impl_->height;
+    return true;
 }
 
-void Window::setCursor(CursorShape)
+void Window::setCursor(CursorShape shape)
 {
+    if (impl_->cursorShape == shape)
+        return;
+    impl_->cursorShape = shape;
+    if (impl_->window)
+        glfwSetCursor(impl_->window, impl_->cursors[static_cast<int>(shape)]);
+}
+
+void Window::setTitle(std::string_view title)
+{
+    if (impl_->window)
+        glfwSetWindowTitle(impl_->window, std::string(title).c_str());
+}
+
+bool Window::setMode(WindowMode mode)
+{
+    return impl_->setMode(mode);
+}
+
+WindowMode Window::mode() const
+{
+    return impl_->currentMode();
+}
+
+bool Window::isFullscreen() const
+{
+    return impl_->fullscreen;
+}
+
+bool Window::toggleFullscreen()
+{
+    return impl_->setMode(impl_->fullscreen ? WindowMode::Windowed : WindowMode::Fullscreen);
+}
+
+bool Window::setSize(std::uint32_t width, std::uint32_t height)
+{
+    if (!impl_->window || width == 0 || height == 0)
+        return false;
+    if (impl_->currentMode() != WindowMode::Windowed && !impl_->setMode(WindowMode::Windowed))
+        return false;
+    glfwSetWindowSize(impl_->window, static_cast<int>(width), static_cast<int>(height));
+    return true;
 }
 
 void* Window::nativeHandle() const
 {
-    return nullptr;
+    return impl_->window;
 }
 
 std::uint32_t Window::width() const
 {
-    return 0;
+    return impl_->width;
 }
 
 std::uint32_t Window::height() const
 {
-    return 0;
+    return impl_->height;
 }
 
 }

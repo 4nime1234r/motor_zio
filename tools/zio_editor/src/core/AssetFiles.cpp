@@ -6,6 +6,7 @@
 
 #include "zio/scene3d/Scene3D.h"
 #include "zio/scene3d/SceneIO3D.h"
+#include "zio/scripting/Language.h"
 
 namespace fs = std::filesystem;
 
@@ -27,19 +28,11 @@ std::string classNameFrom(std::string_view fileName)
     return out;
 }
 
-std::string csharpTemplate(const std::string& className)
+const zio::scripting::Languages& languages()
 {
-    return "using Zio;\n\npublic class " + className +
-           " : Script\n{\n    public override void OnStart()\n    {\n    }\n\n    public override void "
-           "OnUpdate(float dt)\n    {\n    }\n}\n";
-}
-
-std::string scriptTemplate(const std::string& className)
-{
-    return "#include \"zio/scene3d/Node3D.h\"\n#include \"zio/scripting/Script.h\"\n\nclass " + className +
-           " : public zio::scripting::Script\n{\npublic:\n    void onStart() override\n    {\n    }\n\n    void "
-           "onUpdate(float dt) override\n    {\n    }\n};\n\nZIO_SCRIPT(" +
-           className + ")\n";
+    static const bool registered = (zio::scripting::Languages::registerBuiltin(), true);
+    (void)registered;
+    return zio::scripting::Languages::instance();
 }
 
 std::string lower(std::string_view text)
@@ -93,6 +86,11 @@ std::vector<AssetEntry> AssetFiles::scan(const fs::path& projectRoot)
     return out;
 }
 
+std::string AssetFiles::className(std::string_view fileName)
+{
+    return classNameFrom(fileName);
+}
+
 std::string AssetFiles::folderFor(std::string_view fileName)
 {
     const std::string ext = extensionOf(fileName);
@@ -104,7 +102,7 @@ std::string AssetFiles::folderFor(std::string_view fileName)
         return "assets/textures";
     if (oneOf(ext, {"wav", "ogg", "mp3", "flac"}))
         return "assets/audio";
-    if (oneOf(ext, {"cs", "cpp", "cc", "c", "h", "hpp", "lua"}))
+    if (languages().isScriptExtension(ext))
         return "assets/scripts";
     return "assets";
 }
@@ -164,13 +162,10 @@ bool AssetFiles::create(const ProjectManager& project, std::string_view name, st
         zio::scene3d::Scene3D blank;
         out << zio::scene3d::serializeScene3D(blank);
     }
-    else if (extensionOf(name) == "cpp" && relative.rfind("assets/scripts/", 0) == 0)
+    else if (relative.rfind("assets/scripts/", 0) == 0)
     {
-        out << scriptTemplate(classNameFrom(name));
-    }
-    else if (extensionOf(name) == "cs" && relative.rfind("assets/scripts/", 0) == 0)
-    {
-        out << csharpTemplate(classNameFrom(name));
+        if (const zio::scripting::ScriptLanguage* language = languages().forExtension(extensionOf(name)))
+            out << language->sourceTemplate(classNameFrom(name));
     }
     out.close();
     if (!out)

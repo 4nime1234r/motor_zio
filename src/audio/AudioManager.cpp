@@ -275,15 +275,40 @@ void AudioManager::update()
 
 #else
 
+#include <miniaudio.h>
+
 namespace zio::audio
 {
 
 struct AudioManager::Impl
 {
+    struct Voice
+    {
+        std::shared_ptr<Clip> clip;
+        ma_audio_buffer buffer{};
+        ma_sound sound{};
+        bool loop = false;
+    };
+
+    bool ready = false;
+    ma_engine engine{};
+    ma_sound_group groups[kCategoryCount]{};
+    std::unordered_map<VoiceHandle, std::unique_ptr<Voice>> voices;
+    VoiceHandle nextHandle = 1;
+
+    static void destroy(Voice& voice)
+    {
+        ma_sound_uninit(&voice.sound);
+        ma_audio_buffer_uninit(&voice.buffer);
+    }
 };
 
 AudioManager::AudioManager() : impl_(std::make_unique<Impl>()) {}
-AudioManager::~AudioManager() = default;
+
+AudioManager::~AudioManager()
+{
+    shutdown();
+}
 
 AudioManager& AudioManager::instance()
 {
@@ -293,32 +318,124 @@ AudioManager& AudioManager::instance()
 
 bool AudioManager::init()
 {
-    return false;
+    if (impl_->ready)
+        return true;
+    if (ma_engine_init(nullptr, &impl_->engine) != MA_SUCCESS)
+        return false;
+    for (ma_sound_group& group : impl_->groups)
+        if (ma_sound_group_init(&impl_->engine, 0, nullptr, &group) != MA_SUCCESS)
+        {
+            ma_engine_uninit(&impl_->engine);
+            return false;
+        }
+    impl_->ready = true;
+    return true;
 }
 
-void AudioManager::shutdown() {}
+void AudioManager::shutdown()
+{
+    if (!impl_->ready)
+        return;
+    for (auto& entry : impl_->voices)
+        Impl::destroy(*entry.second);
+    impl_->voices.clear();
+    for (ma_sound_group& group : impl_->groups)
+        ma_sound_group_uninit(&group);
+    ma_engine_uninit(&impl_->engine);
+    impl_->ready = false;
+}
 
 bool AudioManager::isInitialized() const
 {
-    return false;
+    return impl_->ready;
 }
 
-VoiceHandle AudioManager::play(std::shared_ptr<Clip>, const PlayParams&)
+VoiceHandle AudioManager::play(std::shared_ptr<Clip> clip, const PlayParams& params)
 {
-    return kInvalidVoiceHandle;
+    if (!impl_->ready || !clip || clip->pcm.empty() || clip->channels == 0)
+        return kInvalidVoiceHandle;
+    const auto categoryIndex = static_cast<std::size_t>(params.category);
+    if (categoryIndex >= kCategoryCount)
+        return kInvalidVoiceHandle;
+
+    auto voice  = std::make_unique<Impl::Voice>();
+    voice->clip = clip;
+    voice->loop = params.loop;
+
+    ma_audio_buffer_config config =
+        ma_audio_buffer_config_init(ma_format_s16, clip->channels, clip->frameCount(), clip->pcm.data(), nullptr);
+    config.sampleRate = clip->sampleRate;
+    if (ma_audio_buffer_init(&config, &voice->buffer) != MA_SUCCESS)
+        return kInvalidVoiceHandle;
+    if (ma_sound_init_from_data_source(&impl_->engine, &voice->buffer, 0, &impl_->groups[categoryIndex], &voice->sound) !=
+        MA_SUCCESS)
+    {
+        ma_audio_buffer_uninit(&voice->buffer);
+        return kInvalidVoiceHandle;
+    }
+    ma_sound_set_volume(&voice->sound, std::max(params.volume, 0.f));
+    ma_sound_set_pitch(&voice->sound, std::max(params.pitch, 0.01f));
+    ma_sound_set_looping(&voice->sound, params.loop ? MA_TRUE : MA_FALSE);
+    ma_sound_start(&voice->sound);
+
+    const VoiceHandle handle = impl_->nextHandle++;
+    impl_->voices.emplace(handle, std::move(voice));
+    return handle;
 }
 
-void AudioManager::stop(VoiceHandle) {}
-void AudioManager::setVolume(VoiceHandle, float) {}
-void AudioManager::setPitch(VoiceHandle, float) {}
-
-bool AudioManager::isPlaying(VoiceHandle) const
+void AudioManager::stop(VoiceHandle voice)
 {
-    return false;
+    const auto it = impl_->voices.find(voice);
+    if (it == impl_->voices.end())
+        return;
+    Impl::destroy(*it->second);
+    impl_->voices.erase(it);
 }
 
-void AudioManager::setCategoryVolume(Category, float) {}
-void AudioManager::update() {}
+void AudioManager::setVolume(VoiceHandle voice, float volume)
+{
+    const auto it = impl_->voices.find(voice);
+    if (it != impl_->voices.end())
+        ma_sound_set_volume(&it->second->sound, std::max(volume, 0.f));
+}
+
+void AudioManager::setPitch(VoiceHandle voice, float pitch)
+{
+    const auto it = impl_->voices.find(voice);
+    if (it != impl_->voices.end())
+        ma_sound_set_pitch(&it->second->sound, std::max(pitch, 0.01f));
+}
+
+bool AudioManager::isPlaying(VoiceHandle voice) const
+{
+    const auto it = impl_->voices.find(voice);
+    return it != impl_->voices.end() && ma_sound_is_playing(&it->second->sound) && !ma_sound_at_end(&it->second->sound);
+}
+
+void AudioManager::setCategoryVolume(Category category, float volume)
+{
+    const auto index = static_cast<std::size_t>(category);
+    if (impl_->ready && index < kCategoryCount)
+        ma_sound_group_set_volume(&impl_->groups[index], std::max(volume, 0.f));
+}
+
+void AudioManager::update()
+{
+    if (!impl_->ready)
+        return;
+    for (auto it = impl_->voices.begin(); it != impl_->voices.end();)
+    {
+        if (!it->second->loop && ma_sound_at_end(&it->second->sound))
+        {
+            Impl::destroy(*it->second);
+            it = impl_->voices.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
 
 }
 

@@ -20,6 +20,7 @@
 #include "zio/physics/World.h"
 #include "zio/physics3d/Shapes3D.h"
 #include "zio/physics3d/World3D.h"
+#include "zio/platform/FileDialog.h"
 #include "zio/platform/Window.h"
 #include "zio/prefs/Prefs.h"
 #include "zio/render/Device.h"

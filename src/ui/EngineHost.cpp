@@ -20,6 +20,11 @@
 #endif
 #include <windows.h>
 
+#else
+
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+
 #endif
 
 namespace zio::ui
@@ -79,10 +84,16 @@ void writeClipboard(const std::string& text)
 
 std::string readClipboard()
 {
-    return {};
+    auto* window = static_cast<GLFWwindow*>(platform::Window::instance().nativeHandle());
+    const char* text = window ? glfwGetClipboardString(window) : nullptr;
+    return text ? std::string(text) : std::string();
 }
 
-void writeClipboard(const std::string&) {}
+void writeClipboard(const std::string& text)
+{
+    if (auto* window = static_cast<GLFWwindow*>(platform::Window::instance().nativeHandle()))
+        glfwSetClipboardString(window, text.c_str());
+}
 
 #endif
 

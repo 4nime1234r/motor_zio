@@ -18,6 +18,13 @@ enum class CursorShape
     Hand
 };
 
+enum class WindowMode
+{
+    Windowed,
+    Maximized,
+    Fullscreen
+};
+
 class ZIO_API Window
 {
 public:
@@ -43,6 +50,13 @@ public:
     bool consumeResize(std::uint32_t& outWidth, std::uint32_t& outHeight);
 
     void setCursor(CursorShape shape);
+    void setTitle(std::string_view title);
+
+    bool setMode(WindowMode mode);
+    WindowMode mode() const;
+    bool isFullscreen() const;
+    bool toggleFullscreen();
+    bool setSize(std::uint32_t width, std::uint32_t height);
 
     void* nativeHandle() const;
 

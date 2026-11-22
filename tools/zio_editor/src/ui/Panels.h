@@ -1,6 +1,7 @@
 #pragma once
 
 #include <deque>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -10,6 +11,7 @@
 #include "core/EditorContext.h"
 #include "core/EulerCache.h"
 #include "core/AssetFiles.h"
+#include "zio/scripting/Language.h"
 #include "zio/ui/UI.h"
 
 namespace zio_editor
@@ -27,6 +29,8 @@ public:
     virtual void showPopup(std::vector<zio::ui::MenuItem> items, zio::ui::Vec2 position) = 0;
     virtual float frameMs() const                                                      = 0;
     virtual void log(const std::string& text, bool error = false)                      = 0;
+    virtual void openInCodeEditor(const std::filesystem::path& path)                   = 0;
+    virtual void scriptFileCreated(const std::string& relative)                        = 0;
 };
 
 class HierarchyPanel
@@ -77,6 +81,15 @@ private:
     zio::ui::Label* multi_      = nullptr;
     zio::ui::Widget* fields_    = nullptr;
     zio::ui::Widget* meshBox_   = nullptr;
+    zio::ui::Widget* lightBox_  = nullptr;
+    zio::ui::Button* lightType_ = nullptr;
+    zio::ui::ColorButton* lightColor_ = nullptr;
+    zio::ui::NumberEdit* lightIntensity_ = nullptr;
+    zio::ui::NumberEdit* lightRange_     = nullptr;
+    zio::ui::NumberEdit* lightInner_     = nullptr;
+    zio::ui::NumberEdit* lightOuter_     = nullptr;
+    zio::ui::CheckBox* lightShadow_      = nullptr;
+    zio::ui::NumberEdit* lightShadowOpacity_ = nullptr;
     zio::ui::LineEdit* name_    = nullptr;
     zio::ui::NumberEdit* pos_[3]   = {};
     zio::ui::NumberEdit* rot_[3]   = {};
@@ -116,6 +129,7 @@ private:
     void openEntry(const AssetEntry& entry);
     const AssetEntry* selectedEntry() const;
     void showCreate();
+    void showCreateScript(zio::scripting::ScriptLanguage& language);
     void showDelete();
     void setStatus(const std::string& text, bool error);
     std::vector<zio::ui::MenuItem> menuItems();

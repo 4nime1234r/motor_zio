@@ -31,8 +31,11 @@ public:
     static bool buildScripts(const std::filesystem::path& projectDir, const std::function<void(const std::string&)>& onLine,
                              std::string* error = nullptr);
     static std::filesystem::path scriptsDllPath(const std::filesystem::path& projectDir);
+    static bool installSdk(std::string* error = nullptr);
+    static void prepareProject(const std::filesystem::path& projectDir);
 
     static std::vector<std::string> takeLog();
+    static std::string takeSceneRequest();
 
     int createScript(const std::string& name);
     void startScript(int handle, void* node);

@@ -14,6 +14,8 @@ struct AppConfig
 
     std::uint32_t targetFps = 60;
 
+    std::uint32_t msaaSamples = 4;
+
     bool enableRendering = true;
 
     bool requireRendering = false;

@@ -4,8 +4,6 @@
 
 #if defined(_WIN32)
 #define ZIO_PLATFORM_WINDOWS 1
-#elif defined(__APPLE__)
-#define ZIO_PLATFORM_APPLE 1
 #elif defined(__linux__)
 #define ZIO_PLATFORM_LINUX 1
 #endif

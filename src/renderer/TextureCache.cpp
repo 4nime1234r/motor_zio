@@ -83,6 +83,28 @@ std::shared_ptr<Texture> TextureCache::loadSync(std::string_view path, render::T
     return texture;
 }
 
+std::shared_ptr<Texture> TextureCache::loadFromMemory(std::string_view key, const std::uint8_t* data, std::size_t size,
+                                                      render::TextureFilter filter, render::TextureWrap wrap)
+{
+    std::string cacheKey(key);
+    cacheKey += std::string("|") + (filter == render::TextureFilter::Linear ? "linear" : "point") +
+                (wrap == render::TextureWrap::Repeat ? "|repeat" : "|clamp");
+    if (auto existing = impl_->findLive(cacheKey))
+        return existing;
+
+    if (!render::Device::instance().isInitialized())
+        return nullptr;
+
+    auto image = assets::decodeImageMemory(data, size);
+    if (!image)
+        return nullptr;
+
+    auto texture = makeTexture(*image, filter, wrap);
+    if (texture)
+        impl_->cache[cacheKey] = texture;
+    return texture;
+}
+
 void TextureCache::loadAsync(std::string path, TextureLoadCallback onLoaded)
 {
     if (auto existing = impl_->findLive(path))

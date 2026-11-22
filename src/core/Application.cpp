@@ -18,6 +18,7 @@
 #include "zio/input/InputManager.h"
 #include "zio/jobs/JobSystem.h"
 #include "zio/physics/World.h"
+#include "zio/physics3d/World3D.h"
 #include "zio/platform/Window.h"
 #include "zio/prefs/Prefs.h"
 #include "zio/render/Device.h"
@@ -59,7 +60,7 @@ bool Application::run(AppConfig config)
         if (platform::Window::instance().create(config_.title, config_.windowWidth, config_.windowHeight))
         {
             renderReady_ = render::Device::instance().init(platform::Window::instance().nativeHandle(),
-                                                             config_.windowWidth, config_.windowHeight);
+                                                             config_.windowWidth, config_.windowHeight, config_.msaaSamples);
         }
         if (!renderReady_)
             platform::Window::instance().destroy();
@@ -118,7 +119,10 @@ bool Application::run(AppConfig config)
         input::InputManager::instance().update();
         events::EventBus::instance().dispatchPending();
         if (config_.enablePhysics)
+        {
             physics::World::instance().step(dt);
+            physics3d::World3D::instance().step(dt);
+        }
         scene::SceneStack::instance().update(dt);
 
         if (renderReady_ && !platform::Window::instance().isMinimized())

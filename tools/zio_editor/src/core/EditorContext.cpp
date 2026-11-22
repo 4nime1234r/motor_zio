@@ -6,6 +6,7 @@
 #include <system_error>
 
 #include "zio/math/Quaternion.h"
+#include "zio/physics3d/World3D.h"
 #include "zio/scene3d/SceneIO3D.h"
 
 namespace fs = std::filesystem;
@@ -32,6 +33,11 @@ EditorContext::EditorContext()
 zio::scene3d::MeshNode* EditorContext::selectedMesh() const
 {
     return dynamic_cast<zio::scene3d::MeshNode*>(selected_);
+}
+
+zio::scene3d::LightNode* EditorContext::selectedLight() const
+{
+    return dynamic_cast<zio::scene3d::LightNode*>(selected_);
 }
 
 bool EditorContext::contains(const zio::scene3d::Node3D* node) const
@@ -363,6 +369,13 @@ std::vector<std::string> EditorContext::meshAssets() const
     return out;
 }
 
+std::vector<std::string> EditorContext::prefabAssets() const
+{
+    auto out = project_.listFiles("assets/scenes", ".zscene3d");
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 zio::scene3d::Node3D* EditorContext::addNode(NewNodeKind kind, std::string_view meshPath, std::string* error)
 {
     auto reject = [&](std::string message) -> zio::scene3d::Node3D* {
@@ -394,6 +407,45 @@ zio::scene3d::Node3D* EditorContext::addNode(NewNodeKind kind, std::string_view 
             return reject("No se pudo crear el cubo: " + meshError);
         node     = std::move(mesh);
         baseName = "Cubo";
+        break;
+    }
+    case NewNodeKind::PointLight:
+    {
+        auto light = std::make_unique<zio::scene3d::LightNode>();
+        light->setPosition({0.f, 3.f, 0.f});
+        node     = std::move(light);
+        baseName = "Luz puntual";
+        break;
+    }
+    case NewNodeKind::SpotLight:
+    {
+        auto light = std::make_unique<zio::scene3d::LightNode>();
+        light->setLightType(zio::scene3d::LightType::Spot);
+        light->setPosition({0.f, 4.f, 0.f});
+        light->setRange(15.f);
+        node     = std::move(light);
+        baseName = "Luz focal";
+        break;
+    }
+    case NewNodeKind::Prefab:
+    {
+        const auto absolute = project_.resolve(meshPath);
+        if (!absolute)
+            return reject("Ruta inválida o fuera del proyecto: " + std::string(meshPath));
+        if (absolute->extension() != ".zscene3d")
+            return reject("No es una escena (se esperaba .zscene3d): " + std::string(meshPath));
+        std::error_code ec;
+        if (!fs::is_regular_file(*absolute, ec))
+            return reject("No existe la escena: " + std::string(meshPath));
+
+        enterProjectDirectory();
+        const auto relative = project_.toRelative(*absolute);
+        auto prefab         = std::make_unique<zio::scene3d::PrefabNode>();
+        std::string prefabError;
+        if (!prefab->setSource(relative ? *relative : std::string(meshPath), &prefabError))
+            return reject("No se pudo cargar el prefab: " + prefabError);
+        node     = std::move(prefab);
+        baseName = absolute->stem().string();
         break;
     }
     case NewNodeKind::Mesh:
@@ -558,6 +610,7 @@ void EditorContext::stopPlay()
     if (!playing_)
         return;
     playing_ = false;
+    zio::physics3d::World3D::instance().clear();
     clearSelection();
     std::string error;
     if (!zio::scene3d::deserializeScene3D(scene_, playSnapshot_, &error))

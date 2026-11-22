@@ -39,7 +39,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Instalar dependencias
-        run: sudo apt-get update && sudo apt-get install -y ninja-build g++ libvulkan-dev glslc
+        run: sudo apt-get update && sudo apt-get install -y ninja-build g++ libvulkan-dev glslc pkg-config libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libwayland-dev wayland-protocols libxkbcommon-dev mesa-vulkan-drivers xvfb fontconfig fonts-dejavu-core
 
       - name: Configurar
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DZIO_BUILD_TESTS=ON
@@ -47,23 +47,8 @@ jobs:
       - name: Compilar
         run: cmake --build build --parallel
 
-      - name: Pruebas
-        run: ctest --test-dir build --output-on-failure
-
-  macos:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Instalar dependencias
-        run: brew install ninja vulkan-headers vulkan-loader shaderc
-
-      - name: Configurar
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DZIO_BUILD_TESTS=ON
-
-      - name: Compilar
-        run: cmake --build build --parallel
-
-      - name: Pruebas
-        run: ctest --test-dir build --output-on-failure
+      - name: Pruebas (con pantalla virtual y Vulkan por software)
+        env:
+          ZIO_REQUIRE_RENDER: '1'
+          ZIO_REQUIRE_FONT: '1'
+        run: xvfb-run -a ctest --test-dir build --output-on-failure

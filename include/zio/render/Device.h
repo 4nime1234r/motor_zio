@@ -20,7 +20,8 @@ public:
 
     static Device& instance();
 
-    bool init(void* nativeWindow, std::uint32_t width, std::uint32_t height);
+    bool init(void* nativeWindow, std::uint32_t width, std::uint32_t height, std::uint32_t samples = 4);
+    std::uint32_t sampleCount() const;
     void shutdown();
     bool isInitialized() const;
 
@@ -40,7 +41,8 @@ public:
     void bindPipeline(PipelineHandle pipeline);
     void bindVertexBuffer(BufferHandle buffer, std::uint32_t strideBytes);
     void bindTexture(TextureHandle texture, std::uint32_t slot = 0);
-    void draw(std::uint32_t vertexCount, std::uint32_t startVertex = 0);
+    void bindInstanceBuffer(BufferHandle buffer);
+    void draw(std::uint32_t vertexCount, std::uint32_t startVertex = 0, std::uint32_t instanceCount = 1);
 
     void setViewport(std::uint32_t x, std::uint32_t y, std::uint32_t width, std::uint32_t height);
     void resetViewport();
@@ -49,6 +51,10 @@ public:
     void endShadowPass();
     void bindShadowMap();
     std::uint32_t shadowMapSize() const;
+    std::uint32_t shadowAtlasSize() const;
+    void setShadowViewport(std::uint32_t x, std::uint32_t y, std::uint32_t width, std::uint32_t height);
+
+    bool bindUniformBlock(const void* data, std::uint32_t sizeBytes);
 
     void endFrame();
 

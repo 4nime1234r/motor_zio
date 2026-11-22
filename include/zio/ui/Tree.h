@@ -16,6 +16,10 @@ namespace zio::ui
 class ZIO_API TreeItem
 {
 public:
+    TreeItem()                           = default;
+    TreeItem(const TreeItem&)            = delete;
+    TreeItem& operator=(const TreeItem&) = delete;
+
     std::string text;
     std::optional<Color> iconColor;
     std::shared_ptr<Icon> icon;

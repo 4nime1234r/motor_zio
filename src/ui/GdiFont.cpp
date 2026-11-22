@@ -291,12 +291,180 @@ std::shared_ptr<AtlasFont> createSystemFont(std::string_view family, float sizeP
 
 #else
 
+#include "internal/TrueType.h"
+
 namespace zio::ui
 {
 
-std::shared_ptr<AtlasFont> createSystemFont(std::string_view, float, bool)
+namespace
 {
-    return nullptr;
+
+constexpr int kAtlasSize = 1024;
+constexpr int kPadding   = 2;
+
+class TrueTypeFont final : public AtlasFont
+{
+public:
+    TrueTypeFont(std::string_view family, float sizePx, bool bold) : size_(sizePx)
+    {
+        if (!face_.load(family, bold))
+            return;
+        ascent_     = std::round(face_.ascent(sizePx));
+        lineHeight_ = std::round(face_.lineHeight(sizePx));
+        atlas_.assign(static_cast<std::size_t>(kAtlasSize) * kAtlasSize * 4, 0);
+        ready_ = true;
+
+        for (char32_t c = 32; c < 127; ++c)
+            entry(c);
+        for (char32_t c = 160; c < 256; ++c)
+            entry(c);
+        for (char32_t c : {0x2022u, 0x2026u, 0x20ACu})
+            entry(static_cast<char32_t>(c));
+    }
+
+    ~TrueTypeFont() override
+    {
+        auto& device = render::Device::instance();
+        if (!device.isInitialized())
+            return;
+        if (texture_ != render::kInvalidHandle)
+            device.destroyTexture(texture_);
+        for (render::TextureHandle handle : retired_)
+            device.destroyTexture(handle);
+        for (render::TextureHandle handle : retiredOld_)
+            device.destroyTexture(handle);
+    }
+
+    bool ready() const { return ready_; }
+
+    float size() const override { return size_; }
+    float lineHeight() const override { return lineHeight_; }
+    float ascent() const override { return ascent_; }
+
+    float advance(char32_t codepoint) override
+    {
+        if (codepoint < 32 || !ready_)
+            return 0.f;
+        return entry(codepoint).advance;
+    }
+
+    bool glyph(char32_t codepoint, Glyph& out) override
+    {
+        if (codepoint < 32 || !ready_)
+            return false;
+        out = entry(codepoint);
+        return out.width > 0.f;
+    }
+
+    render::TextureHandle atlasTexture() override { return texture_; }
+
+    void uploadIfDirty() override
+    {
+        auto& device = render::Device::instance();
+        for (render::TextureHandle handle : retiredOld_)
+            device.destroyTexture(handle);
+        retiredOld_ = std::move(retired_);
+        retired_.clear();
+
+        if (!dirty_ || !ready_ || !device.isInitialized())
+            return;
+
+        render::TextureDesc desc{};
+        desc.width       = kAtlasSize;
+        desc.height      = kAtlasSize;
+        desc.pixelsRgba8 = atlas_.data();
+        desc.filter      = render::TextureFilter::Linear;
+        desc.wrap        = render::TextureWrap::Clamp;
+        const render::TextureHandle created = device.createTexture(desc);
+        if (created == render::kInvalidHandle)
+            return;
+        if (texture_ != render::kInvalidHandle)
+            retired_.push_back(texture_);
+        texture_ = created;
+        dirty_   = false;
+    }
+
+private:
+    Glyph& entry(char32_t codepoint)
+    {
+        auto it = glyphs_.find(codepoint);
+        if (it != glyphs_.end())
+            return it->second;
+        return glyphs_.emplace(codepoint, rasterize(codepoint)).first->second;
+    }
+
+    Glyph rasterize(char32_t codepoint)
+    {
+        Glyph result;
+        result.advance = std::round(face_.advance(codepoint, size_));
+
+        internal::TrueTypeFace::GlyphBitmap bitmap;
+        if (codepoint == ' ' || codepoint == 0xA0 || !face_.rasterize(codepoint, size_, bitmap))
+            return result;
+
+        const int cellWidth  = bitmap.width + 2 * kPadding;
+        const int cellHeight = bitmap.height + 2 * kPadding;
+        if (penX_ + cellWidth > kAtlasSize)
+        {
+            penX_ = 0;
+            penY_ += rowHeight_;
+            rowHeight_ = 0;
+        }
+        if (penY_ + cellHeight > kAtlasSize)
+            return result;
+        rowHeight_ = std::max(rowHeight_, cellHeight);
+
+        for (int y = 0; y < bitmap.height; ++y)
+            for (int x = 0; x < bitmap.width; ++x)
+            {
+                std::uint8_t* target = atlas_.data() + (static_cast<std::size_t>(penY_ + kPadding + y) * kAtlasSize +
+                                                        static_cast<std::size_t>(penX_ + kPadding + x)) * 4;
+                target[0] = 255;
+                target[1] = 255;
+                target[2] = 255;
+                target[3] = bitmap.alpha[static_cast<std::size_t>(y) * bitmap.width + x];
+            }
+
+        const float inverse = 1.f / static_cast<float>(kAtlasSize);
+        result.u0           = static_cast<float>(penX_) * inverse;
+        result.v0           = static_cast<float>(penY_) * inverse;
+        result.u1           = static_cast<float>(penX_ + cellWidth) * inverse;
+        result.v1           = static_cast<float>(penY_ + cellHeight) * inverse;
+        result.width        = static_cast<float>(cellWidth);
+        result.height       = static_cast<float>(cellHeight);
+        result.offsetX      = static_cast<float>(bitmap.offsetX - kPadding);
+        result.offsetY      = static_cast<float>(bitmap.offsetY - kPadding);
+
+        penX_ += cellWidth;
+        dirty_ = true;
+        return result;
+    }
+
+    internal::TrueTypeFace face_;
+    float size_       = 0.f;
+    float lineHeight_ = 0.f;
+    float ascent_     = 0.f;
+    int penX_         = 0;
+    int penY_         = 0;
+    int rowHeight_    = 0;
+    bool ready_       = false;
+    bool dirty_       = false;
+
+    std::vector<std::uint8_t> atlas_;
+    std::unordered_map<char32_t, Glyph> glyphs_;
+    render::TextureHandle texture_ = render::kInvalidHandle;
+    std::vector<render::TextureHandle> retired_;
+    std::vector<render::TextureHandle> retiredOld_;
+};
+
+}
+
+std::shared_ptr<AtlasFont> createSystemFont(std::string_view family, float sizePx, bool bold)
+{
+    auto font = std::make_shared<TrueTypeFont>(family, sizePx, bold);
+    if (!font->ready())
+        return nullptr;
+    return font;
 }
 
 }

@@ -97,7 +97,7 @@ zio::ui::IconItem iconFor(const AssetEntry& entry)
         item.color = rgb(0xf472b6);
         icon       = "file-music";
     }
-    else if (oneOf(ext, {"cs", "cpp", "cc", "c", "h", "hpp", "lua"}))
+    else if (zio::scripting::Languages::instance().isScriptExtension(ext))
     {
         item.color = rgb(0xc084fc);
         icon       = "file-code";
@@ -414,6 +414,61 @@ std::unique_ptr<zio::ui::Widget> InspectorPanel::build()
         }
     });
 
+    lightBox_       = fields_->add<zio::ui::VBox>();
+    auto* lightBody = addFoldout(lightBox_, "Luz", true);
+    lightType_      = lightBody->add<zio::ui::Button>(std::string("Tipo: Puntual"));
+    lightType_->setOnClick([this]() {
+        auto* light = services_.context().selectedLight();
+        if (!light || syncing_)
+            return;
+        light->setLightType(light->lightType() == zio::scene3d::LightType::Point ? zio::scene3d::LightType::Spot
+                                                                                 : zio::scene3d::LightType::Point);
+        services_.context().markDirty();
+    });
+    lightBody->add<zio::ui::Label>(std::string("Color"));
+    lightColor_ = lightBody->add<zio::ui::ColorButton>();
+    lightColor_->setOnChanged([this](zio::ui::Color c) {
+        if (syncing_)
+            return;
+        if (auto* light = services_.context().selectedLight())
+        {
+            light->setColor({c.r, c.g, c.b, 1.f});
+            services_.context().markDirty();
+        }
+    });
+    const auto lightField = [this, lightBody](const char* label, double step, int decimals,
+                                              void (zio::scene3d::LightNode::*setter)(float)) {
+        auto* field = lightBody->add<zio::ui::NumberEdit>();
+        field->setStep(step);
+        field->setDecimals(decimals);
+        field->setLabel(label);
+        field->setOnChanged([this, setter](double value) {
+            if (syncing_)
+                return;
+            if (auto* light = services_.context().selectedLight())
+            {
+                (light->*setter)(static_cast<float>(value));
+                services_.context().markDirty();
+            }
+        });
+        return field;
+    };
+    lightIntensity_ = lightField("Intensidad", 0.05, 2, &zio::scene3d::LightNode::setIntensity);
+    lightRange_     = lightField("Alcance", 0.1, 2, &zio::scene3d::LightNode::setRange);
+    lightInner_     = lightField("Ángulo interior (°)", 0.5, 1, &zio::scene3d::LightNode::setInnerAngle);
+    lightOuter_     = lightField("Ángulo exterior (°)", 0.5, 1, &zio::scene3d::LightNode::setOuterAngle);
+    lightShadow_    = lightBody->add<zio::ui::CheckBox>(std::string("Proyecta sombra"));
+    lightShadow_->setOnToggled([this](bool checked) {
+        if (syncing_)
+            return;
+        if (auto* light = services_.context().selectedLight())
+        {
+            light->setCastShadow(checked);
+            services_.context().markDirty();
+        }
+    });
+    lightShadowOpacity_ = lightField("Opacidad de sombra", 0.05, 2, &zio::scene3d::LightNode::setShadowOpacity);
+
     animBox_       = meshBox_->add<zio::ui::VBox>();
     auto* animBody = addFoldout(animBox_, "Animación", true);
     auto* pick     = animBody->add<zio::ui::HBox>();
@@ -516,8 +571,8 @@ std::vector<std::string> InspectorPanel::scriptCandidates(const zio::scene3d::No
     std::set<std::string> names;
     const ProjectManager& project = services_.context().project();
     if (project.isOpen())
-        for (const char* extension : {".cpp", ".cs"})
-            for (const std::string& file : project.listFiles("assets/scripts", extension))
+        for (const auto& language : zio::scripting::Languages::instance().all())
+            for (const std::string& file : project.listFiles("assets/scripts", "." + language->newFileExtension()))
             {
                 std::string stem = fs::path(file).stem().string();
                 if (!stem.empty())
@@ -561,19 +616,22 @@ void InspectorPanel::refresh()
     auto& ctx   = services_.context();
     auto* node  = ctx.selected();
     auto* mesh  = ctx.selectedMesh();
+    auto* light = ctx.selectedLight();
 
     hint_->setVisible(node == nullptr);
     title_->setVisible(node != nullptr);
     fields_->setVisible(node != nullptr);
     multi_->setVisible(node != nullptr && ctx.selection().size() > 1);
     meshBox_->setVisible(mesh != nullptr);
+    lightBox_->setVisible(light != nullptr);
     fields_->setEnabled(!ctx.playing());
     if (!node)
         return;
 
     syncing_ = true;
     const std::string label = node->name().empty() ? (node->parent() ? "(sin nombre)" : "Escena") : node->name();
-    title_->setText(label + (mesh ? "   [Malla]" : "   [Nodo 3D]"));
+    const bool prefab = dynamic_cast<zio::scene3d::PrefabNode*>(node) != nullptr;
+    title_->setText(label + (mesh ? "   [Malla]" : (light ? "   [Luz]" : (prefab ? "   [Prefab]" : "   [Nodo 3D]"))));
     if (ctx.selection().size() > 1)
         multi_->setText("(+" + std::to_string(ctx.selection().size() - 1) + " más seleccionados; se edita el último)");
 
@@ -606,6 +664,30 @@ void InspectorPanel::refresh()
             scriptNode_      = node;
             rebuildScripts(*node);
         }
+    }
+
+    if (light)
+    {
+        const bool spot = light->lightType() == zio::scene3d::LightType::Spot;
+        lightType_->setText(spot ? "Tipo: Focal" : "Tipo: Puntual");
+        if (!services_.ui().hasPopups())
+        {
+            const auto c = light->color();
+            lightColor_->setColor({c.r, c.g, c.b, 1.f});
+        }
+        if (!lightIntensity_->editing())
+            lightIntensity_->setValue(light->intensity());
+        if (!lightRange_->editing())
+            lightRange_->setValue(light->range());
+        if (!lightInner_->editing())
+            lightInner_->setValue(light->innerAngle());
+        if (!lightOuter_->editing())
+            lightOuter_->setValue(light->outerAngle());
+        lightInner_->setVisible(spot);
+        lightOuter_->setVisible(spot);
+        lightShadow_->setChecked(light->castShadow());
+        if (!lightShadowOpacity_->editing())
+            lightShadowOpacity_->setValue(light->shadowOpacity());
     }
 
     if (mesh)
@@ -685,6 +767,12 @@ std::vector<MenuItem> FilesPanel::menuItems()
 {
     const bool has = selectedEntry() != nullptr;
     std::vector<MenuItem> items;
+    for (const auto& language : zio::scripting::Languages::instance().all())
+    {
+        zio::scripting::ScriptLanguage* raw = language.get();
+        items.push_back(MenuItem::item("Nuevo script de " + raw->displayName() + "...", [this, raw]() { showCreateScript(*raw); }));
+    }
+    items.push_back(MenuItem::line());
     items.push_back(MenuItem::item("Crear...", [this]() { showCreate(); }));
     if (has)
     {
@@ -736,6 +824,11 @@ void FilesPanel::openEntry(const AssetEntry& entry)
         setStatus("Ruta inválida.", true);
         return;
     }
+    if (zio::scripting::Languages::instance().isScriptExtension(entry.extension))
+    {
+        services_.openInCodeEditor(*absolute);
+        return;
+    }
     const HINSTANCE result = ShellExecuteW(nullptr, L"open", absolute->wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     if (reinterpret_cast<INT_PTR>(result) <= 32)
         setStatus("No hay un programa para abrir " + entry.name + ".", true);
@@ -778,6 +871,59 @@ void FilesPanel::showCreate()
         }
         raw->close();
         setStatus("Creado " + relative.substr(7), false);
+        requestScan();
+    };
+    dialog->addButton("Cancelar", [raw]() { raw->cancel(); });
+    dialog->addButton("Crear", confirm, true);
+    dialog->setOnConfirm(confirm);
+    name->setOnSubmit([confirm](const std::string&) { confirm(); });
+    name->setOnCancel([raw]() { raw->cancel(); });
+    services_.ui().openPopup(std::move(dialog));
+    services_.ui().setFocus(name);
+}
+
+void FilesPanel::showCreateScript(zio::scripting::ScriptLanguage& language)
+{
+    using namespace zio::ui;
+    if (!services_.context().project().isOpen())
+        return;
+    zio::scripting::ScriptLanguage* target = &language;
+    auto dialog  = std::make_unique<Dialog>("Nuevo script de " + language.displayName());
+    auto content = std::make_unique<VBox>();
+    content->add<Label>(std::string("Nombre del script (por ejemplo Jugador)"));
+    auto* name  = content->add<LineEdit>();
+    auto* error = content->add<Label>(std::string());
+    error->setColor(services_.ui().theme().danger);
+    dialog->setContent(std::move(content));
+    dialog->setWidth(420.f);
+
+    Dialog* raw  = dialog.get();
+    auto confirm = [this, raw, name, error, target]() {
+        const std::string typed = name->text();
+        std::string problem, relative;
+        if (typed.find('.') != std::string::npos)
+        {
+            error->setText("Escribe solo el nombre, sin extensión.");
+            return;
+        }
+        const std::string fileName = typed + "." + target->newFileExtension();
+        auto& ctx                  = services_.context();
+        if (!AssetFiles::create(ctx.project(), fileName, &relative, &problem))
+        {
+            error->setText(problem);
+            return;
+        }
+        raw->close();
+        setStatus("Creado " + relative.substr(7), false);
+        services_.scriptFileCreated(relative);
+        if (!ctx.playing())
+            if (auto* node = ctx.selected())
+            {
+                node->addScript(AssetFiles::className(fileName));
+                ctx.markDirty();
+            }
+        if (const auto absolute = ctx.project().resolve(relative))
+            services_.openInCodeEditor(*absolute);
         requestScan();
     };
     dialog->addButton("Cancelar", [raw]() { raw->cancel(); });

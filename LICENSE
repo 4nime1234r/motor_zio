@@ -1,4 +1,4 @@
-Zio - Licencia de uso libre con atribución
+Zio - Licencia de uso libre con atribución y sin venta
 
 Copyright (c) 2026 4nime1234r.
 
@@ -11,10 +11,9 @@ third_party/icons/LICENSE-lucide.txt).
 1. Permiso
    Se concede permiso, sin coste, a cualquier persona que obtenga una copia de
    este software y de sus archivos asociados (el "Software") para usarlo,
-   copiarlo, modificarlo de cualquier manera, fusionarlo, publicarlo,
-   distribuirlo, sublicenciarlo y venderlo, con cualquier fin, incluido el
-   comercial, y para permitir que otros lo hagan, siempre que se cumpla la
-   condición de la sección 2.
+   copiarlo, modificarlo de cualquier manera, fusionarlo, publicarlo y
+   distribuirlo de forma gratuita, y para permitir que otros lo hagan, siempre
+   que se cumplan las condiciones de las secciones 2 y 3.
 
 2. Condición: dar crédito al autor
    Debes dar crédito a 4nime1234r como autor original de Zio:
@@ -29,36 +28,48 @@ third_party/icons/LICENSE-lucide.txt).
       su "acerca de", que está basado en Zio de 4nime1234r, y debes enlazar
       a https://github.com/4nime1234r/motor_zio.
 
-3. Lo que no se puede hacer
+3. Prohibido vender el Software
+   No puedes vender el Software, ni una versión modificada, ni una parte
+   sustancial de ellos. Tampoco puedes cobrar por su uso, su descarga, su
+   acceso, su alquiler o su soporte, ni incluirlos en un producto, servicio o
+   suscripción que se venda como motor de juegos, editor o herramienta de
+   desarrollo. Distribuir copias solo cubriendo el coste del soporte físico o
+   del alojamiento, sin ganancia por el Software, no se considera venta.
+
+   Los juegos y aplicaciones que crees con Zio son tuyos. Puedes distribuirlos
+   y cobrar por ellos siempre que cumplas la sección 2, pero no puedes vender el
+   Software que va dentro de ellos por separado.
+
+4. Lo que no se puede hacer
    No puedes presentar el Software, ni una versión modificada, como si fuera
    obra tuya, ni quitar o alterar los avisos de autoría.
 
-4. Versiones modificadas
+5. Versiones modificadas
    Quien modifica el Software es responsable de sus modificaciones. Las
    versiones oficiales las publica únicamente el Autor en el repositorio
    oficial.
 
-5. Componentes de terceros
+6. Componentes de terceros
    El Software incluye componentes de terceros con sus propias licencias,
    indicados en el directorio "third_party". Esas licencias se aplican solo a
    esos componentes.
 
-6. Terminación
+7. Terminación
    Esta licencia termina automáticamente si incumples la condición de la
-   sección 2. Si corriges el incumplimiento, tus derechos se restablecen desde
+   sección 2 o la prohibición de la sección 3. Si corriges el incumplimiento, tus derechos se restablecen desde
    ese momento.
 
-7. Sin garantía
+8. Sin garantía
    EL SOFTWARE SE PROPORCIONA "TAL CUAL", SIN GARANTÍA DE NINGÚN TIPO, EXPRESA
    O IMPLÍCITA, INCLUIDAS, ENTRE OTRAS, LAS GARANTÍAS DE COMERCIABILIDAD,
    IDONEIDAD PARA UN FIN PARTICULAR Y NO INFRACCIÓN.
 
-8. Limitación de responsabilidad
+9. Limitación de responsabilidad
    EN NINGÚN CASO EL AUTOR SERÁ RESPONSABLE DE NINGUNA RECLAMACIÓN, DAÑO U
    OTRA RESPONSABILIDAD, YA SEA EN UNA ACCIÓN CONTRACTUAL, EXTRACONTRACTUAL O DE
    OTRO TIPO, DERIVADA DEL SOFTWARE, DE SU USO O DE OTRAS OPERACIONES CON EL
    SOFTWARE.
 
-9. Contacto
+10. Contacto
    Para dudas sobre esta licencia, contacta con el Autor a través de su perfil
    de GitHub: https://github.com/4nime1234r.

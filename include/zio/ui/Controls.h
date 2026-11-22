@@ -105,6 +105,8 @@ public:
     const std::string& text() const { return text_; }
     void setPlaceholder(std::string text) { placeholder_ = std::move(text); }
     void setReadOnly(bool readOnly) { readOnly_ = readOnly; }
+    void setPassword(bool password) { password_ = password; }
+    bool password() const { return password_; }
     void setOnChanged(std::function<void(const std::string&)> callback) { onChanged_ = std::move(callback); }
     void setOnSubmit(std::function<void(const std::string&)> callback) { onSubmit_ = std::move(callback); }
     void setOnFocusLost(std::function<void()> callback) { onFocusLost_ = std::move(callback); }
@@ -145,6 +147,8 @@ private:
     float scrollX_      = 0.f;
     bool dragging_      = false;
     bool readOnly_      = false;
+    bool password_      = false;
+    std::string masked(std::size_t upToByte) const;
     double blinkBase_   = 0.0;
     std::function<void(const std::string&)> onChanged_;
     std::function<void(const std::string&)> onSubmit_;

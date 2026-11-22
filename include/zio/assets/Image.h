@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -20,6 +21,8 @@ struct Image
 };
 
 ZIO_API std::optional<Image> decodeImageFile(std::string_view path);
+
+ZIO_API std::optional<Image> decodeImageMemory(const std::uint8_t* data, std::size_t size);
 
 using ImageLoadCallback = std::function<void(std::optional<Image>)>;
 

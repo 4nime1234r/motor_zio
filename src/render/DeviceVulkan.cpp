@@ -1,11 +1,14 @@
 #include "zio/render/Device.h"
 
 #if defined(ZIO_PLATFORM_WINDOWS)
-
 #include <windows.h>
-
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan.h>
+#else
+#define GLFW_INCLUDE_NONE
+#include <vulkan/vulkan.h>
+#include <GLFW/glfw3.h>
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -37,7 +40,7 @@ VkFormat toVkFormat(VertexFormat format)
 
 struct Device::Impl
 {
-    HWND hwnd = nullptr;
+    void* nativeWindow = nullptr;
 
     VkInstance instance             = VK_NULL_HANDLE;
     VkSurfaceKHR surface            = VK_NULL_HANDLE;
@@ -53,6 +56,11 @@ struct Device::Impl
     std::vector<VkFramebuffer> framebuffers;
 
     VkFormat depthFormat       = VK_FORMAT_D32_SFLOAT_S8_UINT;
+    std::uint32_t requestedSamples = 4;
+    VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT;
+    VkImage msaaImage          = VK_NULL_HANDLE;
+    VkDeviceMemory msaaMemory  = VK_NULL_HANDLE;
+    VkImageView msaaView       = VK_NULL_HANDLE;
     VkImage depthImage         = VK_NULL_HANDLE;
     VkDeviceMemory depthMemory = VK_NULL_HANDLE;
     VkImageView depthView      = VK_NULL_HANDLE;
@@ -63,7 +71,8 @@ struct Device::Impl
     VkRenderPass renderPassClear = VK_NULL_HANDLE;
     VkRenderPass renderPassLoad  = VK_NULL_HANDLE;
 
-    static constexpr std::uint32_t kShadowMapSize = 2048;
+    static constexpr std::uint32_t kShadowMapSize   = 2048;
+    static constexpr std::uint32_t kShadowAtlasSize = 4096;
     VkRenderPass renderPassShadow         = VK_NULL_HANDLE;
     VkImage shadowImage                   = VK_NULL_HANDLE;
     VkDeviceMemory shadowMemory           = VK_NULL_HANDLE;
@@ -88,6 +97,16 @@ struct Device::Impl
     VkDescriptorPool descriptorPool            = VK_NULL_HANDLE;
     VkSampler defaultSampler                   = VK_NULL_HANDLE;
     VkSampler samplers[4]                      = {};
+
+    static constexpr VkDeviceSize kUniformRange = 4096;
+    static constexpr VkDeviceSize kUniformRing  = 256 * 1024;
+    VkDescriptorSetLayout uniformSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSet uniformSet             = VK_NULL_HANDLE;
+    VkBuffer uniformBuffer                 = VK_NULL_HANDLE;
+    VkDeviceMemory uniformMemory           = VK_NULL_HANDLE;
+    void* uniformMapped                    = nullptr;
+    VkDeviceSize uniformWriteOffset        = 0;
+    VkDeviceSize uniformAlignment          = 256;
 
     struct BufferSlot
     {
@@ -126,6 +145,9 @@ struct Device::Impl
     VkBuffer cached_vertex_buffer        = VK_NULL_HANDLE;
     VkDeviceSize cached_vertex_offset    = 0;
     VkDescriptorSet cached_descriptor_set = VK_NULL_HANDLE;
+    static constexpr std::uint32_t kMaterialSlots = 4;
+    static constexpr std::uint32_t kLayoutSets    = 3 + kMaterialSlots;
+    VkDescriptorSet cached_material_sets[kMaterialSlots] = {};
 
     void resetBoundStateCache()
     {
@@ -133,13 +155,15 @@ struct Device::Impl
         cached_vertex_buffer  = VK_NULL_HANDLE;
         cached_vertex_offset  = 0;
         cached_descriptor_set = VK_NULL_HANDLE;
+        for (VkDescriptorSet& set : cached_material_sets)
+            set = VK_NULL_HANDLE;
         shadowSetBound        = false;
     }
 
-    bool attachToWindow(HWND externalHwnd)
+    bool attachToWindow(void* externalWindow)
     {
-        hwnd = externalHwnd;
-        return hwnd != nullptr;
+        nativeWindow = externalWindow;
+        return nativeWindow != nullptr;
     }
 
     bool findMemoryType(std::uint32_t typeBits, VkMemoryPropertyFlags props, std::uint32_t& outIndex) const
@@ -223,7 +247,15 @@ struct Device::Impl
         appInfo.pApplicationName = "Motor_zio";
         appInfo.apiVersion = VK_API_VERSION_1_1;
 
-        const char* extensions[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
+        std::vector<const char*> extensions;
+#if defined(ZIO_PLATFORM_WINDOWS)
+        extensions = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
+#else
+        std::uint32_t required       = 0;
+        const char** requiredNames = glfwGetRequiredInstanceExtensions(&required);
+        for (std::uint32_t i = 0; requiredNames && i < required; ++i)
+            extensions.push_back(requiredNames[i]);
+#endif
 
         const char* validationLayer = "VK_LAYER_KHRONOS_validation";
         std::uint32_t layerCount    = 0;
@@ -237,8 +269,8 @@ struct Device::Impl
 
         VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
         info.pApplicationInfo        = &appInfo;
-        info.enabledExtensionCount   = 2;
-        info.ppEnabledExtensionNames = extensions;
+        info.enabledExtensionCount   = static_cast<std::uint32_t>(extensions.size());
+        info.ppEnabledExtensionNames = extensions.data();
         if (haveValidation)
         {
             info.enabledLayerCount   = 1;
@@ -250,10 +282,14 @@ struct Device::Impl
 
     bool createSurfaceFromWindow()
     {
+#if defined(ZIO_PLATFORM_WINDOWS)
         VkWin32SurfaceCreateInfoKHR info{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
         info.hinstance = GetModuleHandleW(nullptr);
-        info.hwnd      = hwnd;
+        info.hwnd      = static_cast<HWND>(nativeWindow);
         return vkCreateWin32SurfaceKHR(instance, &info, nullptr, &surface) == VK_SUCCESS;
+#else
+        return glfwCreateWindowSurface(instance, static_cast<GLFWwindow*>(nativeWindow), nullptr, &surface) == VK_SUCCESS;
+#endif
     }
 
     bool pickPhysicalDeviceAndQueueFamily()
@@ -425,33 +461,67 @@ struct Device::Impl
         }
     }
 
+    void pickSampleCount()
+    {
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(physicalDevice, &props);
+        const VkSampleCountFlags supported = props.limits.framebufferColorSampleCounts &
+                                             props.limits.framebufferDepthSampleCounts &
+                                             props.limits.framebufferStencilSampleCounts;
+        sampleCount = VK_SAMPLE_COUNT_1_BIT;
+        for (const VkSampleCountFlagBits candidate :
+             {VK_SAMPLE_COUNT_8_BIT, VK_SAMPLE_COUNT_4_BIT, VK_SAMPLE_COUNT_2_BIT})
+            if (static_cast<std::uint32_t>(candidate) <= requestedSamples && (supported & candidate))
+            {
+                sampleCount = candidate;
+                return;
+            }
+    }
+
+    bool multisampled() const { return sampleCount != VK_SAMPLE_COUNT_1_BIT; }
+
     bool createRenderPasses()
     {
         pickDepthFormat();
-        VkAttachmentDescription attachments[2]{};
+        pickSampleCount();
+        VkAttachmentDescription attachments[3]{};
         VkAttachmentDescription& colorAttachment = attachments[0];
         VkAttachmentDescription& depthAttachment = attachments[1];
+        VkAttachmentDescription& resolveAttachment = attachments[2];
         colorAttachment.format         = swapchainFormat;
-        colorAttachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+        colorAttachment.samples        = sampleCount;
         colorAttachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
         colorAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        colorAttachment.finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        colorAttachment.finalLayout    = multisampled() ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                                                        : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        resolveAttachment.format         = swapchainFormat;
+        resolveAttachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+        resolveAttachment.loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        resolveAttachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+        resolveAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        resolveAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        resolveAttachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+        resolveAttachment.finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
         depthAttachment.format         = depthFormat;
-        depthAttachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+        depthAttachment.samples        = sampleCount;
         depthAttachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
         depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
         depthAttachment.finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
         VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
         VkAttachmentReference depthRef{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+        VkAttachmentReference resolveRef{2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
 
         VkSubpassDescription subpass{};
         subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount    = 1;
         subpass.pColorAttachments       = &colorRef;
         subpass.pDepthStencilAttachment = &depthRef;
+        if (multisampled())
+            subpass.pResolveAttachments = &resolveRef;
 
         constexpr VkPipelineStageFlags kStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
                                                  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
@@ -465,7 +535,7 @@ struct Device::Impl
         dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
         VkRenderPassCreateInfo rpInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-        rpInfo.attachmentCount = 2;
+        rpInfo.attachmentCount = multisampled() ? 3 : 2;
         rpInfo.pAttachments    = attachments;
         rpInfo.subpassCount    = 1;
         rpInfo.pSubpasses      = &subpass;
@@ -499,7 +569,7 @@ struct Device::Impl
         imgInfo.extent        = {width, height, 1};
         imgInfo.mipLevels     = 1;
         imgInfo.arrayLayers   = 1;
-        imgInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
+        imgInfo.samples       = sampleCount;
         imgInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
         imgInfo.usage         = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
         imgInfo.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
@@ -526,7 +596,47 @@ struct Device::Impl
         viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
         viewInfo.subresourceRange.levelCount = 1;
         viewInfo.subresourceRange.layerCount = 1;
-        return vkCreateImageView(device, &viewInfo, nullptr, &depthView) == VK_SUCCESS;
+        if (vkCreateImageView(device, &viewInfo, nullptr, &depthView) != VK_SUCCESS)
+            return false;
+        return multisampled() ? createMsaaColor() : true;
+    }
+
+    bool createMsaaColor()
+    {
+        VkImageCreateInfo imgInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        imgInfo.imageType     = VK_IMAGE_TYPE_2D;
+        imgInfo.format        = swapchainFormat;
+        imgInfo.extent        = {width, height, 1};
+        imgInfo.mipLevels     = 1;
+        imgInfo.arrayLayers   = 1;
+        imgInfo.samples       = sampleCount;
+        imgInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
+        imgInfo.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        imgInfo.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+        imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (vkCreateImage(device, &imgInfo, nullptr, &msaaImage) != VK_SUCCESS)
+            return false;
+
+        VkMemoryRequirements memReq{};
+        vkGetImageMemoryRequirements(device, msaaImage, &memReq);
+        std::uint32_t memType = 0;
+        if (!findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, memType))
+            return false;
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize  = memReq.size;
+        alloc.memoryTypeIndex = memType;
+        if (vkAllocateMemory(device, &alloc, nullptr, &msaaMemory) != VK_SUCCESS)
+            return false;
+        vkBindImageMemory(device, msaaImage, msaaMemory, 0);
+
+        VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        viewInfo.image                       = msaaImage;
+        viewInfo.viewType                    = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format                      = swapchainFormat;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.layerCount = 1;
+        return vkCreateImageView(device, &viewInfo, nullptr, &msaaView) == VK_SUCCESS;
     }
 
     bool createFramebuffers()
@@ -537,10 +647,11 @@ struct Device::Impl
         framebuffers.resize(swapchainImageViews.size());
         for (std::size_t i = 0; i < swapchainImageViews.size(); ++i)
         {
-            const VkImageView fbAttachments[2] = {swapchainImageViews[i], depthView};
+            const VkImageView fbAttachments[3] = {multisampled() ? msaaView : swapchainImageViews[i], depthView,
+                                                  swapchainImageViews[i]};
             VkFramebufferCreateInfo fbInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
             fbInfo.renderPass      = renderPassClear;
-            fbInfo.attachmentCount = 2;
+            fbInfo.attachmentCount = multisampled() ? 3 : 2;
             fbInfo.pAttachments    = fbAttachments;
             fbInfo.width           = width;
             fbInfo.height          = height;
@@ -589,20 +700,71 @@ struct Device::Impl
         if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS)
             return false;
 
-        const VkDescriptorSetLayout setLayouts[2] = {descriptorSetLayout, descriptorSetLayout};
+        VkDescriptorSetLayoutBinding uniformBinding{};
+        uniformBinding.binding         = 0;
+        uniformBinding.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        uniformBinding.descriptorCount = 1;
+        uniformBinding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+        VkDescriptorSetLayoutCreateInfo uniformLayoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        uniformLayoutInfo.bindingCount = 1;
+        uniformLayoutInfo.pBindings    = &uniformBinding;
+        if (vkCreateDescriptorSetLayout(device, &uniformLayoutInfo, nullptr, &uniformSetLayout) != VK_SUCCESS)
+            return false;
+
+        VkPhysicalDeviceProperties deviceProps{};
+        vkGetPhysicalDeviceProperties(physicalDevice, &deviceProps);
+        if (deviceProps.limits.maxBoundDescriptorSets < kLayoutSets)
+            return false;
+
+        VkDescriptorSetLayout setLayouts[kLayoutSets] = {descriptorSetLayout, descriptorSetLayout, uniformSetLayout};
+        for (std::uint32_t i = 0; i < kMaterialSlots; ++i)
+            setLayouts[3 + i] = descriptorSetLayout;
         VkPipelineLayoutCreateInfo plInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        plInfo.setLayoutCount = 2;
+        plInfo.setLayoutCount = kLayoutSets;
         plInfo.pSetLayouts    = setLayouts;
         if (vkCreatePipelineLayout(device, &plInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
             return false;
 
         static constexpr std::uint32_t kMaxDescriptorSets = 4096;
-        VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxDescriptorSets};
+        VkDescriptorPoolSize poolSizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxDescriptorSets},
+                                             {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1}};
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        poolInfo.maxSets       = kMaxDescriptorSets;
-        poolInfo.poolSizeCount = 1;
-        poolInfo.pPoolSizes    = &poolSize;
-        return vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) == VK_SUCCESS;
+        poolInfo.maxSets       = kMaxDescriptorSets + 1;
+        poolInfo.poolSizeCount = 2;
+        poolInfo.pPoolSizes    = poolSizes;
+        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS)
+            return false;
+        return createUniformRing();
+    }
+
+    bool createUniformRing()
+    {
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(physicalDevice, &props);
+        uniformAlignment = (std::max<VkDeviceSize>)(props.limits.minUniformBufferOffsetAlignment, 16);
+        if (!createBuffer(kUniformRing, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffer,
+                          uniformMemory))
+            return false;
+        if (vkMapMemory(device, uniformMemory, 0, kUniformRing, 0, &uniformMapped) != VK_SUCCESS)
+            return false;
+
+        VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        alloc.descriptorPool     = descriptorPool;
+        alloc.descriptorSetCount = 1;
+        alloc.pSetLayouts        = &uniformSetLayout;
+        if (vkAllocateDescriptorSets(device, &alloc, &uniformSet) != VK_SUCCESS)
+            return false;
+
+        VkDescriptorBufferInfo bufInfo{uniformBuffer, 0, kUniformRange};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet          = uniformSet;
+        write.dstBinding      = 0;
+        write.descriptorCount = 1;
+        write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        write.pBufferInfo     = &bufInfo;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        return true;
     }
 
     bool createDefaultSampler()
@@ -806,7 +968,7 @@ struct Device::Impl
         VkImageCreateInfo imgInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         imgInfo.imageType     = VK_IMAGE_TYPE_2D;
         imgInfo.format        = kFormat;
-        imgInfo.extent        = {kShadowMapSize, kShadowMapSize, 1};
+        imgInfo.extent        = {kShadowAtlasSize, kShadowAtlasSize, 1};
         imgInfo.mipLevels     = 1;
         imgInfo.arrayLayers   = 1;
         imgInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
@@ -843,8 +1005,8 @@ struct Device::Impl
         fbInfo.renderPass      = renderPassShadow;
         fbInfo.attachmentCount = 1;
         fbInfo.pAttachments    = &shadowView;
-        fbInfo.width           = kShadowMapSize;
-        fbInfo.height          = kShadowMapSize;
+        fbInfo.width           = kShadowAtlasSize;
+        fbInfo.height          = kShadowAtlasSize;
         fbInfo.layers          = 1;
         if (vkCreateFramebuffer(device, &fbInfo, nullptr, &shadowFramebuffer) != VK_SUCCESS)
             return false;
@@ -919,6 +1081,15 @@ struct Device::Impl
         depthView   = VK_NULL_HANDLE;
         depthImage  = VK_NULL_HANDLE;
         depthMemory = VK_NULL_HANDLE;
+        if (msaaView)
+            vkDestroyImageView(device, msaaView, nullptr);
+        if (msaaImage)
+            vkDestroyImage(device, msaaImage, nullptr);
+        if (msaaMemory)
+            vkFreeMemory(device, msaaMemory, nullptr);
+        msaaView   = VK_NULL_HANDLE;
+        msaaImage  = VK_NULL_HANDLE;
+        msaaMemory = VK_NULL_HANDLE;
         for (auto view : swapchainImageViews)
             vkDestroyImageView(device, view, nullptr);
         swapchainImageViews.clear();
@@ -940,7 +1111,7 @@ struct Device::Impl
 
     void recordMainPass(VkRenderPass rp, const ClearColor& clear)
     {
-        VkClearValue clearValues[2]{};
+        VkClearValue clearValues[3]{};
         clearValues[0].color        = {{clear.r, clear.g, clear.b, clear.a}};
         clearValues[1].depthStencil = {1.f, 0};
 
@@ -948,7 +1119,7 @@ struct Device::Impl
         rpInfo.renderPass        = rp;
         rpInfo.framebuffer       = framebuffers[currentImageIndex];
         rpInfo.renderArea.extent = {width, height};
-        rpInfo.clearValueCount   = 2;
+        rpInfo.clearValueCount   = multisampled() ? 3 : 2;
         rpInfo.pClearValues      = clearValues;
         vkCmdBeginRenderPass(cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -971,10 +1142,11 @@ Device& Device::instance()
     return global;
 }
 
-bool Device::init(void* nativeWindow, std::uint32_t width, std::uint32_t height)
+bool Device::init(void* nativeWindow, std::uint32_t width, std::uint32_t height, std::uint32_t samples)
 {
-    if (!impl_->attachToWindow(static_cast<HWND>(nativeWindow)))
+    if (!impl_->attachToWindow(nativeWindow))
         return false;
+    impl_->requestedSamples = samples < 1 ? 1 : samples;
 
     return impl_->createInstance() && impl_->createSurfaceFromWindow() && impl_->pickPhysicalDeviceAndQueueFamily() &&
            impl_->createLogicalDeviceAndQueue() && impl_->createSwapchain(width, height) &&
@@ -1044,6 +1216,18 @@ void Device::shutdown()
         vkDestroyPipelineLayout(impl_->device, impl_->pipelineLayout, nullptr);
     if (impl_->descriptorSetLayout)
         vkDestroyDescriptorSetLayout(impl_->device, impl_->descriptorSetLayout, nullptr);
+    if (impl_->uniformSetLayout)
+        vkDestroyDescriptorSetLayout(impl_->device, impl_->uniformSetLayout, nullptr);
+    if (impl_->uniformMapped)
+        vkUnmapMemory(impl_->device, impl_->uniformMemory);
+    if (impl_->uniformBuffer)
+        vkDestroyBuffer(impl_->device, impl_->uniformBuffer, nullptr);
+    if (impl_->uniformMemory)
+        vkFreeMemory(impl_->device, impl_->uniformMemory, nullptr);
+    impl_->uniformSetLayout = VK_NULL_HANDLE;
+    impl_->uniformMapped    = nullptr;
+    impl_->uniformBuffer    = VK_NULL_HANDLE;
+    impl_->uniformMemory    = VK_NULL_HANDLE;
 
     if (impl_->inFlightFence)
         vkDestroyFence(impl_->device, impl_->inFlightFence, nullptr);
@@ -1234,9 +1418,26 @@ PipelineHandle Device::createPipeline(const PipelineDesc& desc)
             {static_cast<std::uint32_t>(i), 0, toVkFormat(attr.format), attr.offsetBytes});
     }
 
+    VkVertexInputBindingDescription bindings[2]{};
+    bindings[0] = binding;
+    std::uint32_t bindingCount = 1;
+    if (desc.instanceAttributeCount > 0)
+    {
+        bindings[1].binding   = 1;
+        bindings[1].stride    = desc.instanceStrideBytes;
+        bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+        bindingCount          = 2;
+        for (std::size_t i = 0; i < desc.instanceAttributeCount; ++i)
+        {
+            const auto& attr = desc.instanceAttributes[i];
+            attributes.push_back({static_cast<std::uint32_t>(desc.attributeCount + i), 1, toVkFormat(attr.format),
+                                  attr.offsetBytes});
+        }
+    }
+
     VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    vertexInput.vertexBindingDescriptionCount   = 1;
-    vertexInput.pVertexBindingDescriptions      = &binding;
+    vertexInput.vertexBindingDescriptionCount   = bindingCount;
+    vertexInput.pVertexBindingDescriptions      = bindings;
     vertexInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size());
     vertexInput.pVertexAttributeDescriptions    = attributes.data();
 
@@ -1259,7 +1460,7 @@ PipelineHandle Device::createPipeline(const PipelineDesc& desc)
     rasterizer.lineWidth   = 1.f;
 
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multisample.rasterizationSamples = desc.shadowPass ? VK_SAMPLE_COUNT_1_BIT : impl_->sampleCount;
 
     VkPipelineColorBlendAttachmentState blendAttachment{};
     blendAttachment.blendEnable         = VK_TRUE;
@@ -1487,6 +1688,9 @@ void Device::destroyTexture(TextureHandle handle)
     auto& tex = impl_->textures[handle - 1];
     if (tex.descriptorSet == impl_->cached_descriptor_set)
         impl_->cached_descriptor_set = VK_NULL_HANDLE;
+    for (VkDescriptorSet& cached : impl_->cached_material_sets)
+        if (cached == tex.descriptorSet)
+            cached = VK_NULL_HANDLE;
     if (tex.view)
         vkDestroyImageView(impl_->device, tex.view, nullptr);
     if (tex.image)
@@ -1515,6 +1719,7 @@ void Device::beginFrame(const ClearColor& clear)
         slot.writeOffset   = 0;
         slot.currentOffset = 0;
     }
+    impl_->uniformWriteOffset = 0;
 
     const VkResult acquireResult = vkAcquireNextImageKHR(impl_->device, impl_->swapchain, UINT64_MAX,
                                                           impl_->imageAvailable, VK_NULL_HANDLE,
@@ -1561,12 +1766,23 @@ void Device::bindVertexBuffer(BufferHandle handle, std::uint32_t )
 
 void Device::bindTexture(TextureHandle handle, std::uint32_t slot)
 {
-    if (!impl_->frameValid || slot != 0)
+    if (!impl_->frameValid || slot > Impl::kMaterialSlots)
         return;
 
     VkDescriptorSet set = impl_->dummyDescriptorSet;
     if (handle != kInvalidHandle && handle <= impl_->textures.size() && impl_->textures[handle - 1].descriptorSet)
         set = impl_->textures[handle - 1].descriptorSet;
+
+    if (slot != 0)
+    {
+        VkDescriptorSet& cached = impl_->cached_material_sets[slot - 1];
+        if (cached == set)
+            return;
+        vkCmdBindDescriptorSets(impl_->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, impl_->pipelineLayout, 2 + slot, 1, &set,
+                                0, nullptr);
+        cached = set;
+        return;
+    }
 
     if (impl_->cached_descriptor_set == set)
         return;
@@ -1575,11 +1791,22 @@ void Device::bindTexture(TextureHandle handle, std::uint32_t slot)
     impl_->cached_descriptor_set = set;
 }
 
-void Device::draw(std::uint32_t vertexCount, std::uint32_t startVertex)
+void Device::bindInstanceBuffer(BufferHandle handle)
+{
+    if (!impl_->frameValid || handle == kInvalidHandle || handle > impl_->buffers.size())
+        return;
+    VkBuffer buffer = impl_->buffers[handle - 1].buffer;
+    if (!buffer)
+        return;
+    const VkDeviceSize offset = impl_->buffers[handle - 1].currentOffset;
+    vkCmdBindVertexBuffers(impl_->cmd, 1, 1, &buffer, &offset);
+}
+
+void Device::draw(std::uint32_t vertexCount, std::uint32_t startVertex, std::uint32_t instanceCount)
 {
     if (!impl_->frameValid)
         return;
-    vkCmdDraw(impl_->cmd, vertexCount, 1, startVertex, 0);
+    vkCmdDraw(impl_->cmd, vertexCount, instanceCount, startVertex, 0);
 }
 
 void Device::setViewport(std::uint32_t x, std::uint32_t y, std::uint32_t width, std::uint32_t height)
@@ -1615,14 +1842,14 @@ bool Device::beginShadowPass()
     VkRenderPassBeginInfo rpInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rpInfo.renderPass        = impl_->renderPassShadow;
     rpInfo.framebuffer       = impl_->shadowFramebuffer;
-    rpInfo.renderArea.extent = {Impl::kShadowMapSize, Impl::kShadowMapSize};
+    rpInfo.renderArea.extent = {Impl::kShadowAtlasSize, Impl::kShadowAtlasSize};
     rpInfo.clearValueCount   = 1;
     rpInfo.pClearValues      = &clear;
     vkCmdBeginRenderPass(impl_->cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    const float size = static_cast<float>(Impl::kShadowMapSize);
+    const float size = static_cast<float>(Impl::kShadowAtlasSize);
     VkViewport viewport{0.f, size, size, -size, 0.f, 1.f};
-    VkRect2D scissor{{0, 0}, {Impl::kShadowMapSize, Impl::kShadowMapSize}};
+    VkRect2D scissor{{0, 0}, {Impl::kShadowAtlasSize, Impl::kShadowAtlasSize}};
     vkCmdSetViewport(impl_->cmd, 0, 1, &viewport);
     vkCmdSetScissor(impl_->cmd, 0, 1, &scissor);
 
@@ -1674,6 +1901,43 @@ void Device::bindShadowMap()
 std::uint32_t Device::shadowMapSize() const
 {
     return Impl::kShadowMapSize;
+}
+
+std::uint32_t Device::shadowAtlasSize() const
+{
+    return Impl::kShadowAtlasSize;
+}
+
+void Device::setShadowViewport(std::uint32_t x, std::uint32_t y, std::uint32_t width, std::uint32_t height)
+{
+    if (!impl_->frameValid || !impl_->inShadowPass)
+        return;
+    const std::uint32_t atlas = Impl::kShadowAtlasSize;
+    x      = (std::min)(x, atlas - 1);
+    y      = (std::min)(y, atlas - 1);
+    width  = (std::max)(1u, (std::min)(width, atlas - x));
+    height = (std::max)(1u, (std::min)(height, atlas - y));
+    VkViewport viewport{static_cast<float>(x), static_cast<float>(y + height), static_cast<float>(width),
+                        -static_cast<float>(height), 0.f, 1.f};
+    VkRect2D scissor{{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y)}, {width, height}};
+    vkCmdSetViewport(impl_->cmd, 0, 1, &viewport);
+    vkCmdSetScissor(impl_->cmd, 0, 1, &scissor);
+}
+
+bool Device::bindUniformBlock(const void* data, std::uint32_t sizeBytes)
+{
+    if (!impl_->frameValid || !impl_->uniformSet || !data || sizeBytes == 0 || sizeBytes > Impl::kUniformRange)
+        return false;
+    const VkDeviceSize align  = impl_->uniformAlignment;
+    const VkDeviceSize offset = (impl_->uniformWriteOffset + align - 1) / align * align;
+    if (offset + Impl::kUniformRange > Impl::kUniformRing)
+        return false;
+    std::memcpy(static_cast<std::uint8_t*>(impl_->uniformMapped) + offset, data, sizeBytes);
+    impl_->uniformWriteOffset = offset + sizeBytes;
+    const std::uint32_t dynamicOffset = static_cast<std::uint32_t>(offset);
+    vkCmdBindDescriptorSets(impl_->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, impl_->pipelineLayout, 2, 1,
+                            &impl_->uniformSet, 1, &dynamicOffset);
+    return true;
 }
 
 void Device::endFrame()
@@ -1829,126 +2093,14 @@ void* Device::nativeRenderPass() const
     return impl_->renderPassClear;
 }
 
+std::uint32_t Device::sampleCount() const
+{
+    return static_cast<std::uint32_t>(impl_->sampleCount);
+}
+
 std::uint32_t Device::swapchainImageCount() const
 {
     return static_cast<std::uint32_t>(impl_->swapchainImages.size());
 }
 
 }
-
-#else
-
-namespace zio::render
-{
-
-struct Device::Impl
-{
-};
-
-Device::Device() : impl_(std::make_unique<Impl>()) {}
-Device::~Device() = default;
-
-Device& Device::instance()
-{
-    static Device global;
-    return global;
-}
-
-bool Device::init(void*, std::uint32_t, std::uint32_t)
-{
-    return false;
-}
-
-void Device::shutdown() {}
-
-bool Device::isInitialized() const
-{
-    return false;
-}
-
-bool Device::resize(std::uint32_t, std::uint32_t)
-{
-    return false;
-}
-
-BufferHandle Device::createBuffer(const BufferDesc&)
-{
-    return kInvalidHandle;
-}
-
-void Device::destroyBuffer(BufferHandle) {}
-
-bool Device::updateBuffer(BufferHandle, const void*, std::uint32_t)
-{
-    return false;
-}
-
-PipelineHandle Device::createPipeline(const PipelineDesc&)
-{
-    return kInvalidHandle;
-}
-
-void Device::destroyPipeline(PipelineHandle) {}
-
-TextureHandle Device::createTexture(const TextureDesc&)
-{
-    return kInvalidHandle;
-}
-
-void Device::destroyTexture(TextureHandle) {}
-
-void Device::beginFrame(const ClearColor&) {}
-void Device::bindPipeline(PipelineHandle) {}
-void Device::bindVertexBuffer(BufferHandle, std::uint32_t) {}
-void Device::bindTexture(TextureHandle, std::uint32_t) {}
-void Device::draw(std::uint32_t, std::uint32_t) {}
-void Device::endFrame() {}
-
-bool Device::readBackPixel(std::uint32_t, std::uint32_t, std::uint8_t[4])
-{
-    return false;
-}
-
-void* Device::nativeDevice() const
-{
-    return nullptr;
-}
-
-void* Device::nativeContext() const
-{
-    return nullptr;
-}
-
-void* Device::nativeInstance() const
-{
-    return nullptr;
-}
-
-void* Device::nativePhysicalDevice() const
-{
-    return nullptr;
-}
-
-void* Device::nativeQueue() const
-{
-    return nullptr;
-}
-
-std::uint32_t Device::nativeQueueFamily() const
-{
-    return 0;
-}
-
-void* Device::nativeRenderPass() const
-{
-    return nullptr;
-}
-
-std::uint32_t Device::swapchainImageCount() const
-{
-    return 0;
-}
-
-}
-
-#endif

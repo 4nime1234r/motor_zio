@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(motor_zio VERSION 0.3.0 LANGUAGES CXX)
+project(motor_zio VERSION 0.3.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -47,6 +47,7 @@ add_library(engine STATIC
     src/physics3d/Collision3D.cpp
     src/physics3d/World3D.cpp
     src/platform/Window.cpp
+    src/platform/FileDialog.cpp
     src/prefs/Prefs.cpp
     src/render/DeviceVulkan.cpp
     src/renderer/BatchRenderer.cpp
@@ -59,6 +60,11 @@ add_library(engine STATIC
     src/scene3d/Gltf.cpp
     src/scripting/Script.cpp
     src/scripting/DotNet.cpp
+    src/scripting/NativeScripts.cpp
+    src/pack/Package.cpp
+    third_party/monocypher/monocypher.c
+    src/scripting/Language.cpp
+    src/scripting/ZioLanguage.cpp
     src/scene3d/Skeleton.cpp
     src/scene3d/Mesh.cpp
     src/scene3d/Node3D.cpp
@@ -91,7 +97,53 @@ target_include_directories(engine PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-target_include_directories(engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/third_party/monocypher)
+
+if(WIN32 AND MSVC)
+    target_compile_definitions(engine PRIVATE ZIO_SHARED_LIB ZIO_EXPORTS)
+endif()
+
+if(NOT WIN32)
+    include(FetchContent)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    set(zioWayland OFF)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(ZIO_WAYLAND QUIET wayland-client wayland-protocols xkbcommon)
+            if(ZIO_WAYLAND_FOUND)
+                set(zioWayland ON)
+            endif()
+        endif()
+        message(STATUS "zio: Wayland en la ventana: ${zioWayland}")
+    endif()
+    set(GLFW_BUILD_WAYLAND ${zioWayland} CACHE BOOL "" FORCE)
+    FetchContent_Declare(glfw
+        GIT_REPOSITORY https://github.com/glfw/glfw.git
+        GIT_TAG 3.4
+        GIT_SHALLOW TRUE)
+    FetchContent_Declare(stb
+        GIT_REPOSITORY https://github.com/nothings/stb.git
+        GIT_TAG 6b5799bae8a1fe3792691ef4b72ae26434c3e799
+        SOURCE_SUBDIR zio_no_cmake)
+    FetchContent_Declare(miniaudio
+        GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+        GIT_TAG 0.11.25
+        GIT_SHALLOW TRUE
+        SOURCE_SUBDIR zio_no_cmake)
+    FetchContent_MakeAvailable(glfw stb miniaudio)
+    target_sources(engine PRIVATE src/internal/TrueType.cpp src/audio/MiniaudioImpl.cpp)
+    target_include_directories(engine PRIVATE ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR})
+    target_link_libraries(engine PUBLIC $<BUILD_INTERFACE:glfw> $<INSTALL_INTERFACE:glfw> ${CMAKE_DL_LIBS})
+endif()
+
+option(ZIO_ENABLE_ZIO_LANGUAGE "Registra el lenguaje propio de Zio (src/scripting/ZioLanguage.cpp)" OFF)
+if(ZIO_ENABLE_ZIO_LANGUAGE)
+    target_compile_definitions(engine PRIVATE ZIO_ENABLE_ZIO_LANGUAGE)
+endif()
 
 find_package(Threads REQUIRED)
 target_link_libraries(engine PUBLIC Threads::Threads)
@@ -99,7 +151,7 @@ target_link_libraries(engine PUBLIC Threads::Threads)
 target_link_libraries(engine PUBLIC Vulkan::Vulkan)
 if(WIN32)
     target_link_libraries(engine PUBLIC
-        user32 gdi32 winmm ole32 gdiplus xinput xaudio2 mfplat mfreadwrite)
+        user32 gdi32 shell32 bcrypt winmm ole32 gdiplus xinput xaudio2 mfplat mfreadwrite)
 endif()
 
 zio_add_spirv_shader(engine
@@ -110,6 +162,8 @@ zio_add_spirv_shader(engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/mesh3d.vert mesh3d_vert.spv.h zio_mesh3d_vert_spirv)
 zio_add_spirv_shader(engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/mesh3d.frag mesh3d_frag.spv.h zio_mesh3d_frag_spirv)
+zio_add_spirv_shader(engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/mesh3d_inst.vert mesh3d_inst_vert.spv.h zio_mesh3d_inst_vert_spirv)
 zio_add_spirv_shader(engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/shadow.frag shadow_frag.spv.h zio_shadow_frag_spirv)
 
@@ -134,6 +188,17 @@ else()
     file(WRITE ${ZIO_BRIDGE_CPP}.in "#include \"scripting/EmbeddedBridge.h\"\n\nnamespace zio::scripting\n{\n\nconst EmbeddedFile* embeddedBridgeFiles(int& count)\n{\n    static const unsigned char empty[] = {0};\n    static const EmbeddedFile files[] = {{\"ZioScripting.dll\", empty, 0}};\n    count = 1;\n    return files;\n}\n\n}\n")
     configure_file(${ZIO_BRIDGE_CPP}.in ${ZIO_BRIDGE_CPP} COPYONLY)
 endif()
+set(ZIO_SDK_CPP ${CMAKE_CURRENT_BINARY_DIR}/ZioSdkData.cpp)
+file(GLOB_RECURSE ZIO_SDK_HEADERS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/include/*.h)
+add_custom_command(
+    OUTPUT ${ZIO_SDK_CPP}
+    COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/include -DOUTPUT=${ZIO_SDK_CPP}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/zio_embed_sdk.cmake
+    DEPENDS ${ZIO_SDK_HEADERS} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/zio_embed_sdk.cmake
+    COMMENT "Incrustando las cabeceras del motor para compilar scripts"
+    VERBATIM)
+target_sources(engine PRIVATE ${ZIO_SDK_CPP})
+set_source_files_properties(${ZIO_SDK_CPP} PROPERTIES GENERATED TRUE)
 target_sources(engine PRIVATE ${ZIO_BRIDGE_CPP})
 set_source_files_properties(${ZIO_BRIDGE_CPP} PROPERTIES GENERATED TRUE)
 
@@ -147,6 +212,11 @@ endif()
 option(ZIO_BUILD_EDITOR "Build the Zio editor (tools/zio_editor) so it can be run from the IDE" ${zioEditorDefault})
 if(ZIO_BUILD_EDITOR AND WIN32)
     add_subdirectory(tools/zio_editor)
+endif()
+
+option(ZIO_BUILD_PLAYER "Compila el reproductor de juegos (tools/zio_player)" ${zioEditorDefault})
+if(ZIO_BUILD_PLAYER AND NOT WIN32)
+    add_subdirectory(tools/zio_player)
 endif()
 
 option(ZIO_BUILD_TESTS "Compila las pruebas automaticas del motor" OFF)

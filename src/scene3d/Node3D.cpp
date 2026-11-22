@@ -4,6 +4,8 @@
 #include <cmath>
 
 #include "zio/scene3d/Renderer3D.h"
+#include "zio/scene3d/Scene3D.h"
+#include "zio/scene3d/SceneIO3D.h"
 
 namespace zio::scene3d
 {
@@ -61,6 +63,20 @@ std::vector<std::string> Node3D::scriptNames() const
     return names;
 }
 
+void Node3D::releaseScripts()
+{
+    for (ScriptSlot& slot : scripts_)
+    {
+        if (slot.instance && slot.started)
+            slot.instance->onDestroy();
+        slot.instance.reset();
+        slot.started = false;
+        slot.tried   = 0;
+    }
+    for (auto& child : children_)
+        child->releaseScripts();
+}
+
 void Node3D::runScripts(float dt)
 {
     for (std::size_t i = 0; i < scripts_.size(); ++i)
@@ -105,6 +121,24 @@ std::unique_ptr<Node3D> Node3D::removeChild(Node3D* child)
     return out;
 }
 
+std::size_t Node3D::removeDestroyed()
+{
+    std::size_t removed = 0;
+    for (std::size_t i = 0; i < children_.size();)
+    {
+        if (children_[i]->destroyPending_)
+        {
+            std::unique_ptr<Node3D> doomed = removeChild(children_[i].get());
+            doomed.reset();
+            ++removed;
+            continue;
+        }
+        removed += children_[i]->removeDestroyed();
+        ++i;
+    }
+    return removed;
+}
+
 void Node3D::removeAllChildren()
 {
     children_.clear();
@@ -138,17 +172,113 @@ bool MeshNode::setMeshSource(std::string source, std::string* error)
         return false;
     mesh_       = std::move(mesh);
     meshSource_ = std::move(source);
-    color_      = renderer::Color{mesh_->baseColor[0], mesh_->baseColor[1], mesh_->baseColor[2], mesh_->baseColor[3]};
+    loadPartTextures();
+    if (mesh_->parts.size() > 1)
+    {
+        color_ = renderer::Color::white();
+        setTexturePath({});
+        return true;
+    }
+    color_ = renderer::Color{mesh_->baseColor[0], mesh_->baseColor[1], mesh_->baseColor[2], mesh_->baseColor[3]};
     if (!mesh_->texturePath.empty())
         setTexturePath(mesh_->texturePath);
     return true;
 }
 
+void MeshNode::setMesh(std::shared_ptr<Mesh> mesh)
+{
+    mesh_ = std::move(mesh);
+    meshSource_.clear();
+    loadPartTextures();
+}
+
+void MeshNode::loadPartTextures()
+{
+    partTextures_.clear();
+    materialTextures_.clear();
+    morphWeights_.clear();
+    morphed_.reset();
+    if (!mesh_)
+        return;
+    morphWeights_.assign(mesh_->morphTargets.size(), 0.f);
+    for (std::size_t i = 0; i < morphWeights_.size() && i < mesh_->morphWeights.size(); ++i)
+        morphWeights_[i] = mesh_->morphWeights[i];
+    applyMorph();
+    auto load = [this](const std::string& path) -> std::shared_ptr<renderer::Texture>
+    {
+        if (path.empty())
+            return nullptr;
+        if (path.rfind(kEmbeddedPrefix, 0) == 0)
+        {
+            const auto it = mesh_->embeddedImages.find(path);
+            if (it == mesh_->embeddedImages.end())
+                return nullptr;
+            return renderer::TextureCache::instance().loadFromMemory(path, it->second.data(), it->second.size(),
+                                                                     render::TextureFilter::Linear,
+                                                                     render::TextureWrap::Repeat);
+        }
+        return renderer::TextureCache::instance().loadSync(path, render::TextureFilter::Linear,
+                                                           render::TextureWrap::Repeat);
+    };
+    auto loadMaterial = [&](const Material& m)
+    {
+        MaterialTextures t;
+        t.normal            = load(m.normalTexture);
+        t.metallicRoughness = load(m.metallicRoughnessTexture);
+        t.emissive          = load(m.emissiveTexture);
+        t.occlusion         = load(m.occlusionTexture);
+        return t;
+    };
+    if (mesh_->parts.size() < 2)
+    {
+        materialTextures_.push_back(loadMaterial(mesh_->material));
+        return;
+    }
+    for (const SubMesh& part : mesh_->parts)
+    {
+        partTextures_.push_back(load(part.texturePath));
+        materialTextures_.push_back(loadMaterial(part.material));
+    }
+}
+
+void MeshNode::applyMaterial(MeshStyle& style, const Material& material, const MaterialTextures& textures) const
+{
+    style.metallic          = material.metallic;
+    style.roughness         = material.roughness;
+    style.normalScale       = material.normalScale;
+    style.occlusionStrength = material.occlusionStrength;
+    style.alphaMode         = material.alphaMode;
+    style.alphaCutoff       = material.alphaCutoff;
+    style.doubleSided       = material.doubleSided;
+    for (int i = 0; i < 3; ++i)
+        style.emissive[i] = material.emissive[i];
+    auto handle = [](const std::shared_ptr<renderer::Texture>& t)
+    { return t ? t->handle : render::kInvalidHandle; };
+    style.normalTexture            = handle(textures.normal);
+    style.metallicRoughnessTexture = handle(textures.metallicRoughness);
+    style.emissiveTexture          = handle(textures.emissive);
+    style.occlusionTexture         = handle(textures.occlusion);
+}
+
 void MeshNode::setTexturePath(std::string path)
 {
-    texture_ = path.empty() ? nullptr
-                            : renderer::TextureCache::instance().loadSync(path, render::TextureFilter::Linear,
-                                                                           render::TextureWrap::Repeat);
+    texture_.reset();
+    if (path.rfind(kEmbeddedPrefix, 0) == 0)
+    {
+        if (mesh_)
+        {
+            const auto it = mesh_->embeddedImages.find(path);
+            if (it != mesh_->embeddedImages.end())
+                texture_ = renderer::TextureCache::instance().loadFromMemory(
+                    path, it->second.data(), it->second.size(), render::TextureFilter::Linear,
+                    render::TextureWrap::Repeat);
+        }
+    }
+    else if (!path.empty())
+    {
+        texture_ = renderer::TextureCache::instance().loadSync(path, render::TextureFilter::Linear,
+                                                               render::TextureWrap::Repeat);
+    }
     texturePath_ = std::move(path);
 }
 
@@ -260,7 +390,162 @@ void MeshNode::pose()
     }
     if (!posed_)
         posed_ = std::make_shared<Mesh>();
-    mesh_->skin->apply(*mesh_, matrices, *posed_);
+    posed_->dynamic = true;
+    mesh_->skin->apply(morphed_ ? *morphed_ : *mesh_, matrices, *posed_);
+}
+
+const std::string& MeshNode::morphTargetName(std::size_t index) const
+{
+    static const std::string empty;
+    return mesh_ && index < mesh_->morphTargets.size() ? mesh_->morphTargets[index].name : empty;
+}
+
+void MeshNode::setMorphWeight(std::size_t index, float weight)
+{
+    if (index >= morphWeights_.size())
+        return;
+    morphWeights_[index] = weight;
+    applyMorph();
+    if (animPlaying_)
+        pose();
+}
+
+void MeshNode::applyMorph()
+{
+    morphed_.reset();
+    if (!mesh_ || mesh_->morphTargets.empty())
+        return;
+    bool any = false;
+    for (const float w : morphWeights_)
+        any = any || w != 0.f;
+    if (!any)
+        return;
+    morphed_           = std::make_shared<Mesh>();
+    morphed_->dynamic  = true;
+    morphed_->vertices = mesh_->vertices;
+    const std::size_t count = morphed_->vertices.size();
+    for (std::size_t t = 0; t < morphWeights_.size() && t < mesh_->morphTargets.size(); ++t)
+    {
+        const float w = morphWeights_[t];
+        if (w == 0.f)
+            continue;
+        const MorphTarget& target = mesh_->morphTargets[t];
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            if (i < target.positions.size())
+                morphed_->vertices[i].position = morphed_->vertices[i].position + target.positions[i] * w;
+            if (i < target.normals.size())
+                morphed_->vertices[i].normal = morphed_->vertices[i].normal + target.normals[i] * w;
+        }
+    }
+    for (Vertex3D& v : morphed_->vertices)
+        v.normal = v.normal.normalized();
+}
+
+std::size_t MeshNode::addFileLights()
+{
+    if (!mesh_)
+        return 0;
+    std::size_t added = 0;
+    for (const FileLight& fl : mesh_->lights)
+    {
+        if (fl.type == FileLightType::Directional)
+            continue;
+        LightNode* node = addChild<LightNode>();
+        node->setName(fl.name.empty() ? "Light" : fl.name);
+        node->setLightType(fl.type == FileLightType::Spot ? LightType::Spot : LightType::Point);
+        node->setColor(renderer::Color{fl.color[0], fl.color[1], fl.color[2], 1.f});
+        node->setIntensity(fl.intensity <= 10.f ? fl.intensity : 1.f);
+        node->setRange(fl.range > 0.f ? fl.range : 10.f);
+        node->setInnerAngle(fl.innerAngleDegrees);
+        node->setOuterAngle(fl.outerAngleDegrees);
+        node->setPosition({fl.world.m[0][3], fl.world.m[1][3], fl.world.m[2][3]});
+        const math::Vec3 forward = fl.world.transformVector({0.f, 0.f, -1.f}).normalized();
+        const math::Vec3 down{0.f, -1.f, 0.f};
+        const float d = std::clamp(down.x * forward.x + down.y * forward.y + down.z * forward.z, -1.f, 1.f);
+        const math::Vec3 axis = down.cross(forward);
+        if (d < -0.9999f)
+            node->setRotation(math::Quaternion::fromAxisAngle({1.f, 0.f, 0.f}, 180.f));
+        else if (axis.length() > 1e-6f)
+            node->setRotation(math::Quaternion::fromAxisAngle(axis.normalized(), std::acos(d) * 57.29578f));
+        ++added;
+    }
+    return added;
+}
+
+bool MeshNode::fileCamera(std::size_t index, Camera& out) const
+{
+    if (!mesh_ || index >= mesh_->cameras.size())
+        return false;
+    const FileCamera& fc = mesh_->cameras[index];
+    const auto& w        = fc.world;
+    out.position         = {w.m[0][3], w.m[1][3], w.m[2][3]};
+    out.target           = out.position + w.transformVector({0.f, 0.f, -1.f}).normalized();
+    out.up               = w.transformVector({0.f, 1.f, 0.f}).normalized();
+    out.fovYDegrees      = fc.fovYDegrees;
+    out.nearZ            = fc.nearZ;
+    out.farZ             = fc.farZ;
+    return true;
+}
+
+namespace
+{
+
+constexpr int kMaxPrefabDepth = 8;
+thread_local int prefabDepth  = 0;
+
+struct PrefabDepthGuard
+{
+    PrefabDepthGuard() { ++prefabDepth; }
+    ~PrefabDepthGuard() { --prefabDepth; }
+};
+
+}
+
+bool PrefabNode::setSource(std::string source, std::string* error)
+{
+    source_ = std::move(source);
+    return reload(error);
+}
+
+bool PrefabNode::reload(std::string* error)
+{
+    removeAllChildren();
+    if (source_.empty())
+        return true;
+    if (prefabDepth >= kMaxPrefabDepth)
+    {
+        if (error)
+            *error = "los prefabs se contienen unos a otros demasiado hondo: " + source_;
+        return false;
+    }
+    PrefabDepthGuard guard;
+    Scene3D inner;
+    if (!loadScene3DFile(inner, source_, error))
+        return false;
+    while (!inner.root().children().empty())
+    {
+        std::unique_ptr<Node3D> child = inner.root().removeChild(inner.root().children().front().get());
+        addChild(std::move(child));
+    }
+    return true;
+}
+
+void LightNode::onDraw(Renderer3D& renderer)
+{
+    const math::Mat4& w = worldMatrix();
+    LocalLight light;
+    light.type              = type_;
+    light.position          = {w.m[0][3], w.m[1][3], w.m[2][3]};
+    light.direction         = w.transformVector({0.f, -1.f, 0.f});
+    light.color             = color_;
+    light.intensity         = intensity_;
+    light.range             = range_;
+    light.innerAngleDegrees = inner_;
+    light.outerAngleDegrees = outer_;
+    light.shadows           = castShadow_;
+    light.shadowOpacity     = shadowOpacity_;
+    renderer.addLight(light);
 }
 
 void MeshNode::onDraw(Renderer3D& renderer)
@@ -272,7 +557,29 @@ void MeshNode::onDraw(Renderer3D& renderer)
     style.texture     = texture_ ? texture_->handle : render::kInvalidHandle;
     style.uvScale     = uvScale_;
     style.castShadow  = castShadow_;
-    renderer.drawMesh(posed_ ? *posed_ : *mesh_, worldMatrix(), style);
+    const Mesh& drawn = posed_ ? *posed_ : (morphed_ ? *morphed_ : *mesh_);
+    if (mesh_->parts.size() < 2 || partTextures_.size() != mesh_->parts.size())
+    {
+        if (!materialTextures_.empty())
+            applyMaterial(style, mesh_->material, materialTextures_[0]);
+        renderer.drawMesh(drawn, worldMatrix(), style);
+        return;
+    }
+    const render::TextureHandle nodeTexture = style.texture;
+    for (std::size_t i = 0; i < mesh_->parts.size(); ++i)
+    {
+        const SubMesh& part = mesh_->parts[i];
+        MeshStyle partStyle = style;
+        partStyle.color     = renderer::Color{part.baseColor[0] * color_.r, part.baseColor[1] * color_.g,
+                                          part.baseColor[2] * color_.b, part.baseColor[3] * color_.a};
+        if (nodeTexture != render::kInvalidHandle)
+            partStyle.texture = nodeTexture;
+        else
+            partStyle.texture = partTextures_[i] ? partTextures_[i]->handle : render::kInvalidHandle;
+        if (i < materialTextures_.size())
+            applyMaterial(partStyle, part.material, materialTextures_[i]);
+        renderer.drawMeshPart(drawn, part.first, part.count, worldMatrix(), partStyle);
+    }
 }
 
 }

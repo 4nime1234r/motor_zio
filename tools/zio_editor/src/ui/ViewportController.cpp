@@ -384,6 +384,34 @@ void ViewportController::update(float dt, bool keysBlocked)
     camera_.fly(forward * speed, right * speed, up * speed);
 }
 
+namespace
+{
+
+void drawLightMarkers(zio::scene3d::Renderer3D& renderer, const zio::scene3d::Node3D& node)
+{
+    if (!node.isVisible())
+        return;
+    if (const auto* light = dynamic_cast<const zio::scene3d::LightNode*>(&node))
+    {
+        const zio::math::Mat4& w = light->worldMatrix();
+        const zio::math::Vec3 p{w.m[0][3], w.m[1][3], w.m[2][3]};
+        const zio::renderer::Color c = {light->color().r, light->color().g, light->color().b, 1.f};
+        const float s                = 0.25f;
+        renderer.drawLine(p - zio::math::Vec3{s, 0.f, 0.f}, p + zio::math::Vec3{s, 0.f, 0.f}, c, 2.f);
+        renderer.drawLine(p - zio::math::Vec3{0.f, s, 0.f}, p + zio::math::Vec3{0.f, s, 0.f}, c, 2.f);
+        renderer.drawLine(p - zio::math::Vec3{0.f, 0.f, s}, p + zio::math::Vec3{0.f, 0.f, s}, c, 2.f);
+        if (light->lightType() == zio::scene3d::LightType::Spot)
+        {
+            const zio::math::Vec3 dir = w.transformVector({0.f, -1.f, 0.f}).normalized();
+            renderer.drawLine(p, p + dir * std::min(light->range(), 3.f), c, 2.f);
+        }
+    }
+    for (const auto& child : node.children())
+        drawLightMarkers(renderer, *child);
+}
+
+}
+
 void ViewportController::render(float dt)
 {
     if (!area_)
@@ -417,6 +445,7 @@ void ViewportController::render(float dt)
     renderer.begin(camera, scene.light(), w, h, x, y);
     drawGrid(renderer, camera_.target(), camera_.distance());
     scene.root().visit(renderer);
+    drawLightMarkers(renderer, scene.root());
     for (const zio::scene3d::Node3D* node : context_.selection())
         if (node != context_.selected())
             drawSelectionBox(renderer, *node);

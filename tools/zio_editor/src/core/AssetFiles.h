@@ -24,6 +24,7 @@ public:
 
     static std::vector<AssetEntry> scan(const std::filesystem::path& projectRoot);
 
+    static std::string className(std::string_view fileName);
     static std::string folderFor(std::string_view fileName);
     static bool isValidName(std::string_view name, std::string* reason = nullptr);
 

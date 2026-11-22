@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -34,6 +35,9 @@ public:
 
     std::shared_ptr<Texture> loadSync(std::string_view path);
     std::shared_ptr<Texture> loadSync(std::string_view path, render::TextureFilter filter, render::TextureWrap wrap);
+
+    std::shared_ptr<Texture> loadFromMemory(std::string_view key, const std::uint8_t* data, std::size_t size,
+                                            render::TextureFilter filter, render::TextureWrap wrap);
 
     void loadAsync(std::string path, TextureLoadCallback onLoaded);
 

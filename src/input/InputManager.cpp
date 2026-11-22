@@ -10,6 +10,9 @@
 #define NOMINMAX
 #include <windows.h>
 #include <xinput.h>
+#else
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
 #endif
 
 namespace zio::input
@@ -233,7 +236,97 @@ void InputManager::Impl::pollGamepads()
 
 #else
 
-void InputManager::Impl::pollGamepads() {}
+namespace
+{
+
+float shapeAxis(float value, float deadzone)
+{
+    if (value > deadzone)
+        return std::min((value - deadzone) / (1.f - deadzone), 1.f);
+    if (value < -deadzone)
+        return std::max((value + deadzone) / (1.f - deadzone), -1.f);
+    return 0.f;
+}
+
+float shapeTrigger(float value)
+{
+    const float normalized = (value + 1.f) * 0.5f;
+    constexpr float kThreshold = 0.12f;
+    if (normalized <= kThreshold)
+        return 0.f;
+    return (normalized - kThreshold) / (1.f - kThreshold);
+}
+
+struct ButtonMap
+{
+    int glfwButton;
+    GamepadButton button;
+};
+
+constexpr ButtonMap kButtonMap[] = {
+    {GLFW_GAMEPAD_BUTTON_DPAD_UP, GamepadButton::DPadUp},
+    {GLFW_GAMEPAD_BUTTON_DPAD_DOWN, GamepadButton::DPadDown},
+    {GLFW_GAMEPAD_BUTTON_DPAD_LEFT, GamepadButton::DPadLeft},
+    {GLFW_GAMEPAD_BUTTON_DPAD_RIGHT, GamepadButton::DPadRight},
+    {GLFW_GAMEPAD_BUTTON_START, GamepadButton::Start},
+    {GLFW_GAMEPAD_BUTTON_BACK, GamepadButton::Back},
+    {GLFW_GAMEPAD_BUTTON_LEFT_THUMB, GamepadButton::LeftThumb},
+    {GLFW_GAMEPAD_BUTTON_RIGHT_THUMB, GamepadButton::RightThumb},
+    {GLFW_GAMEPAD_BUTTON_LEFT_BUMPER, GamepadButton::LeftShoulder},
+    {GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER, GamepadButton::RightShoulder},
+    {GLFW_GAMEPAD_BUTTON_A, GamepadButton::A},
+    {GLFW_GAMEPAD_BUTTON_B, GamepadButton::B},
+    {GLFW_GAMEPAD_BUTTON_X, GamepadButton::X},
+    {GLFW_GAMEPAD_BUTTON_Y, GamepadButton::Y},
+};
+
+}
+
+void InputManager::Impl::pollGamepads()
+{
+    for (int i = 0; i < kMaxGamepads; ++i)
+    {
+        GamepadSlot& slot = gamepads[static_cast<std::size_t>(i)];
+
+        GLFWgamepadstate state{};
+        const bool connected = glfwJoystickIsGamepad(GLFW_JOYSTICK_1 + i) && glfwGetGamepadState(GLFW_JOYSTICK_1 + i, &state);
+
+        if (!connected)
+        {
+            slot.pressed.fill(false);
+            if (slot.connected)
+            {
+                for (std::size_t b = 0; b < kGamepadButtonCount; ++b)
+                    slot.released[b] = slot.down[b];
+                slot.down.fill(false);
+                slot.axes.fill(0.f);
+            }
+            else
+            {
+                slot.released.fill(false);
+            }
+            slot.connected = false;
+            continue;
+        }
+
+        slot.connected = true;
+        for (const auto& map : kButtonMap)
+        {
+            const auto index     = static_cast<std::size_t>(map.button);
+            const bool down      = state.buttons[map.glfwButton] == GLFW_PRESS;
+            slot.pressed[index]  = down && !slot.down[index];
+            slot.released[index] = !down && slot.down[index];
+            slot.down[index]     = down;
+        }
+
+        slot.axes[static_cast<std::size_t>(GamepadAxis::LeftX)] = shapeAxis(state.axes[GLFW_GAMEPAD_AXIS_LEFT_X], 0.24f);
+        slot.axes[static_cast<std::size_t>(GamepadAxis::LeftY)] = shapeAxis(-state.axes[GLFW_GAMEPAD_AXIS_LEFT_Y], 0.24f);
+        slot.axes[static_cast<std::size_t>(GamepadAxis::RightX)] = shapeAxis(state.axes[GLFW_GAMEPAD_AXIS_RIGHT_X], 0.27f);
+        slot.axes[static_cast<std::size_t>(GamepadAxis::RightY)] = shapeAxis(-state.axes[GLFW_GAMEPAD_AXIS_RIGHT_Y], 0.27f);
+        slot.axes[static_cast<std::size_t>(GamepadAxis::LeftTrigger)]  = shapeTrigger(state.axes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER]);
+        slot.axes[static_cast<std::size_t>(GamepadAxis::RightTrigger)] = shapeTrigger(state.axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER]);
+    }
+}
 
 #endif
 

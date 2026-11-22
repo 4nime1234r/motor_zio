@@ -55,6 +55,9 @@ struct PipelineDesc
     const VertexAttribute* attributes = nullptr;
     std::size_t attributeCount        = 0;
     std::uint32_t vertexStrideBytes   = 0;
+    const VertexAttribute* instanceAttributes = nullptr;
+    std::size_t instanceAttributeCount        = 0;
+    std::uint32_t instanceStrideBytes         = 0;
     bool depthTest = false;
     bool depthWrite = true;
     bool cullBack = false;

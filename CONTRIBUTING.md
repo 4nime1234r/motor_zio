@@ -68,7 +68,7 @@ Comprueba esta lista:
 
 ## 7. Licencia y crédito
 
-Zio es de uso libre con atribución (consulta [LICENSE](LICENSE)). Al enviar tu contribución aceptas que se publique bajo esa misma licencia. Tu nombre quedará en el historial del repositorio.
+Zio es de uso libre con atribución y sin venta (consulta [LICENSE](LICENSE)). Al enviar tu contribución aceptas que se publique bajo esa misma licencia. Tu nombre quedará en el historial del repositorio.
 
 Si tu pull request incluye contenido de terceros, indícalo en la descripción.
 

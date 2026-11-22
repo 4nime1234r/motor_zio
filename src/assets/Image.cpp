@@ -31,21 +31,11 @@ struct ComThreadGuard
 
 }
 
-std::optional<Image> decodeImageFile(std::string_view path)
+namespace
 {
-    thread_local ComThreadGuard comGuard;
 
-    ComPtr<IWICImagingFactory> factory;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))))
-        return std::nullopt;
-
-    std::wstring widePath = std::filesystem::path(std::string(path)).wstring();
-
-    ComPtr<IWICBitmapDecoder> decoder;
-    if (FAILED(factory->CreateDecoderFromFilename(widePath.c_str(), nullptr, GENERIC_READ,
-                                                   WICDecodeMetadataCacheOnDemand, &decoder)))
-        return std::nullopt;
-
+std::optional<Image> decodeFrame(IWICImagingFactory* factory, IWICBitmapDecoder* decoder)
+{
     ComPtr<IWICBitmapFrameDecode> frame;
     if (FAILED(decoder->GetFrame(0, &frame)))
         return std::nullopt;
@@ -76,14 +66,91 @@ std::optional<Image> decodeImageFile(std::string_view path)
 
 }
 
+std::optional<Image> decodeImageFile(std::string_view path)
+{
+    thread_local ComThreadGuard comGuard;
+
+    ComPtr<IWICImagingFactory> factory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))))
+        return std::nullopt;
+
+    std::wstring widePath = std::filesystem::path(std::string(path)).wstring();
+
+    ComPtr<IWICBitmapDecoder> decoder;
+    if (FAILED(factory->CreateDecoderFromFilename(widePath.c_str(), nullptr, GENERIC_READ,
+                                                   WICDecodeMetadataCacheOnDemand, &decoder)))
+        return std::nullopt;
+    return decodeFrame(factory.Get(), decoder.Get());
+}
+
+std::optional<Image> decodeImageMemory(const std::uint8_t* data, std::size_t size)
+{
+    thread_local ComThreadGuard comGuard;
+    if (!data || size == 0)
+        return std::nullopt;
+
+    ComPtr<IWICImagingFactory> factory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))))
+        return std::nullopt;
+
+    ComPtr<IWICStream> stream;
+    if (FAILED(factory->CreateStream(&stream)) ||
+        FAILED(stream->InitializeFromMemory(const_cast<BYTE*>(data), static_cast<DWORD>(size))))
+        return std::nullopt;
+
+    ComPtr<IWICBitmapDecoder> decoder;
+    if (FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder)))
+        return std::nullopt;
+    return decodeFrame(factory.Get(), decoder.Get());
+}
+
+}
+
 #else
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_NO_STDIO_WIDE
+#include <stb_image.h>
 
 namespace zio::assets
 {
 
-std::optional<Image> decodeImageFile(std::string_view)
+std::optional<Image> decodeImageFile(std::string_view path)
 {
-    return std::nullopt;
+    const std::string file(path);
+    int width = 0, height = 0, channels = 0;
+    stbi_uc* pixels = stbi_load(file.c_str(), &width, &height, &channels, 4);
+    if (!pixels || width <= 0 || height <= 0)
+    {
+        if (pixels)
+            stbi_image_free(pixels);
+        return std::nullopt;
+    }
+    Image image;
+    image.width  = static_cast<std::uint32_t>(width);
+    image.height = static_cast<std::uint32_t>(height);
+    image.pixelsRgba8.assign(pixels, pixels + static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
+    stbi_image_free(pixels);
+    return image;
+}
+
+std::optional<Image> decodeImageMemory(const std::uint8_t* data, std::size_t size)
+{
+    int width = 0, height = 0, channels = 0;
+    stbi_uc* pixels = data && size ? stbi_load_from_memory(data, static_cast<int>(size), &width, &height, &channels, 4)
+                                   : nullptr;
+    if (!pixels || width <= 0 || height <= 0)
+    {
+        if (pixels)
+            stbi_image_free(pixels);
+        return std::nullopt;
+    }
+    Image image;
+    image.width  = static_cast<std::uint32_t>(width);
+    image.height = static_cast<std::uint32_t>(height);
+    image.pixelsRgba8.assign(pixels, pixels + static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
+    stbi_image_free(pixels);
+    return image;
 }
 
 }

@@ -26,6 +26,7 @@ void Scene3D::update(float dt)
     root_.update(dt);
     root_.runScripts(dt);
     updateChildren(root_, dt);
+    root_.removeDestroyed();
 }
 
 void Scene3D::draw(std::uint32_t viewportWidth, std::uint32_t viewportHeight)

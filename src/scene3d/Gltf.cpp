@@ -30,7 +30,7 @@ struct Loader
     Value root;
     std::vector<std::vector<std::uint8_t>> buffers;
     std::shared_ptr<Mesh> mesh = std::make_shared<Mesh>();
-    bool materialTaken         = false;
+    std::vector<long> partMaterial;
     std::vector<long> parentOf;
     std::shared_ptr<Skin> skin;
     long currentSkin = -1;
@@ -307,35 +307,116 @@ struct Loader
         return u;
     }
 
-    void takeMaterial(long materialIndex)
+    std::string imagePath(const Value* textureInfo)
     {
-        if (materialTaken)
-            return;
-        materialTaken  = true;
-        const Value* m = at("materials", materialIndex);
-        if (!m)
-            return;
-        const Value* pbr = m->find("pbrMetallicRoughness");
-        if (!pbr)
-            return;
-        if (const Value* f = pbr->find("baseColorFactor"))
-            if (const auto* a = std::get_if<Array>(&f->v); a && a->size() == 4)
-                for (std::size_t i = 0; i < 4; ++i)
-                    mesh->baseColor[i] = static_cast<float>(number(&(*a)[i], 1.0));
-        const Value* tex = pbr->find("baseColorTexture");
-        if (!tex)
-            return;
-        const Value* t = at("textures", static_cast<long>(number(tex->find("index"), -1)));
+        if (!textureInfo)
+            return {};
+        const Value* t = at("textures", static_cast<long>(number(textureInfo->find("index"), -1)));
         if (!t)
-            return;
-        const Value* img = at("images", static_cast<long>(number(t->find("source"), -1)));
+            return {};
+        const long imageIndex = static_cast<long>(number(t->find("source"), -1));
+        const Value* img      = at("images", imageIndex);
         if (!img)
-            return;
+            return {};
+
         const Value* uri = img->find("uri");
         const auto* text = uri ? std::get_if<std::string>(&uri->v) : nullptr;
         if (text && text->rfind("data:", 0) != 0)
-            mesh->texturePath =
-                (fs::u8path(path).parent_path() / fs::u8path(decodeUri(*text))).generic_string();
+            return (fs::u8path(path).parent_path() / fs::u8path(decodeUri(*text))).generic_string();
+
+        const std::string key = std::string(kEmbeddedPrefix) + path + "#" + std::to_string(imageIndex);
+        if (mesh->embeddedImages.count(key))
+            return key;
+
+        std::vector<std::uint8_t> bytes;
+        if (text)
+        {
+            const std::size_t comma = text->find(',');
+            if (comma == std::string::npos)
+                return {};
+            bytes = decodeBase64(std::string_view(*text).substr(comma + 1));
+        }
+        else if (const Value* view = img->find("bufferView"))
+        {
+            const Value* bv = at("bufferViews", static_cast<long>(number(view, -1)));
+            if (!bv)
+                return {};
+            const long bufferIndex = static_cast<long>(number(bv->find("buffer"), -1));
+            if (bufferIndex < 0 || static_cast<std::size_t>(bufferIndex) >= buffers.size())
+                return {};
+            const auto& buffer      = buffers[static_cast<std::size_t>(bufferIndex)];
+            const std::size_t first = static_cast<std::size_t>(number(bv->find("byteOffset"), 0));
+            const std::size_t size  = static_cast<std::size_t>(number(bv->find("byteLength"), 0));
+            if (first + size > buffer.size())
+                return {};
+            bytes.assign(buffer.begin() + static_cast<std::ptrdiff_t>(first),
+                         buffer.begin() + static_cast<std::ptrdiff_t>(first + size));
+        }
+        if (bytes.empty())
+            return {};
+        mesh->embeddedImages[key] = std::move(bytes);
+        return key;
+    }
+
+    void readMaterial(long materialIndex, SubMesh& part)
+    {
+        const Value* m = at("materials", materialIndex);
+        if (!m)
+            return;
+        Material& mat = part.material;
+        if (const Value* pbr = m->find("pbrMetallicRoughness"))
+        {
+            if (const Value* f = pbr->find("baseColorFactor"))
+                if (const auto* a = std::get_if<Array>(&f->v); a && a->size() == 4)
+                    for (std::size_t i = 0; i < 4; ++i)
+                        part.baseColor[i] = static_cast<float>(number(&(*a)[i], 1.0));
+            mat.metallic  = static_cast<float>(number(pbr->find("metallicFactor"), 1.0));
+            mat.roughness = static_cast<float>(number(pbr->find("roughnessFactor"), 1.0));
+            part.texturePath               = imagePath(pbr->find("baseColorTexture"));
+            mat.metallicRoughnessTexture   = imagePath(pbr->find("metallicRoughnessTexture"));
+        }
+        if (const Value* f = m->find("emissiveFactor"))
+            if (const auto* a = std::get_if<Array>(&f->v); a && a->size() == 3)
+                for (std::size_t i = 0; i < 3; ++i)
+                    mat.emissive[i] = static_cast<float>(number(&(*a)[i], 0.0));
+        if (const Value* n = m->find("normalTexture"))
+        {
+            mat.normalTexture = imagePath(n);
+            mat.normalScale   = static_cast<float>(number(n->find("scale"), 1.0));
+        }
+        if (const Value* o = m->find("occlusionTexture"))
+        {
+            mat.occlusionTexture   = imagePath(o);
+            mat.occlusionStrength  = static_cast<float>(number(o->find("strength"), 1.0));
+        }
+        mat.emissiveTexture = imagePath(m->find("emissiveTexture"));
+        if (const Value* am = m->find("alphaMode"))
+            if (const auto* text = std::get_if<std::string>(&am->v))
+                mat.alphaMode = *text == "BLEND"  ? AlphaMode::Blend
+                                : *text == "MASK" ? AlphaMode::Mask
+                                                  : AlphaMode::Opaque;
+        mat.alphaCutoff = static_cast<float>(number(m->find("alphaCutoff"), 0.5));
+        if (const Value* ds = m->find("doubleSided"))
+            if (const auto* b = std::get_if<bool>(&ds->v))
+                mat.doubleSided = *b;
+    }
+
+    void addPart(long materialIndex, std::size_t firstVertex)
+    {
+        const std::size_t total = mesh->vertices.size();
+        if (total <= firstVertex)
+            return;
+        if (!mesh->parts.empty() && partMaterial.back() == materialIndex && mesh->parts.back().first + mesh->parts.back().count == firstVertex)
+        {
+            mesh->parts.back().count += total - firstVertex;
+            return;
+        }
+        SubMesh part;
+        part.first = firstVertex;
+        part.count = total - firstVertex;
+        readMaterial(materialIndex, part);
+        mesh->parts.push_back(std::move(part));
+        partMaterial.push_back(materialIndex);
     }
 
     math::Mat4 nodeLocal(long nodeIndex) const
@@ -520,7 +601,8 @@ struct Loader
 
     bool primitive(const Value& prim, const math::Mat4& worldMatrix)
     {
-        math::Mat4 world = worldMatrix;
+        const std::size_t firstVertex = mesh->vertices.size();
+        math::Mat4 world              = worldMatrix;
         const long mode = static_cast<long>(number(prim.find("mode"), 4));
         if (mode != 4 && mode != 5 && mode != 6)
             return true;
@@ -548,6 +630,42 @@ struct Loader
                 return false;
             hasUv = uv.components == 2 && uv.count == pos.count;
         }
+
+        Accessor col;
+        bool hasColor = false;
+        if (const Value* c = attrs->find("COLOR_0"))
+        {
+            if (!accessor(static_cast<long>(number(c, -1)), col))
+                return false;
+            hasColor = (col.components == 3 || col.components == 4) && col.count == pos.count;
+        }
+
+        struct TargetData
+        {
+            Accessor pos, nrm;
+            bool hasPos = false, hasNrm = false;
+        };
+        std::vector<TargetData> targets;
+        if (const Array* list = array(prim, "targets"))
+            for (const Value& t : *list)
+            {
+                TargetData d;
+                if (const Value* tp = t.find("POSITION"))
+                {
+                    if (!accessor(static_cast<long>(number(tp, -1)), d.pos))
+                        return false;
+                    d.hasPos = d.pos.components == 3 && d.pos.count == pos.count;
+                }
+                if (const Value* tn = t.find("NORMAL"))
+                {
+                    if (!accessor(static_cast<long>(number(tn, -1)), d.nrm))
+                        return false;
+                    d.hasNrm = d.nrm.components == 3 && d.nrm.count == pos.count;
+                }
+                targets.push_back(d);
+            }
+        while (mesh->morphTargets.size() < targets.size())
+            mesh->morphTargets.emplace_back();
 
         Accessor jointsAccessor[2], weightsAccessor[2];
         bool hasSet[2] = {false, false};
@@ -641,7 +759,30 @@ struct Loader
                             .normalized();
                 const float u = hasUv ? component(uv, i, 0) : 0.f;
                 const float v = hasUv ? component(uv, i, 1) : 0.f;
-                mesh->vertices.push_back({p[k], n, u, v});
+                Vertex3D vertex{p[k], n, u, v};
+                if (hasColor)
+                {
+                    vertex.r = component(col, i, 0);
+                    vertex.g = component(col, i, 1);
+                    vertex.b = component(col, i, 2);
+                    vertex.a = col.components == 4 ? component(col, i, 3) : 1.f;
+                }
+                mesh->vertices.push_back(vertex);
+                for (std::size_t ti = 0; ti < mesh->morphTargets.size(); ++ti)
+                {
+                    MorphTarget& mt = mesh->morphTargets[ti];
+                    mt.positions.resize(mesh->vertices.size(), math::Vec3::zero());
+                    mt.normals.resize(mesh->vertices.size(), math::Vec3::zero());
+                    if (ti >= targets.size())
+                        continue;
+                    const TargetData& td = targets[ti];
+                    if (td.hasPos)
+                        mt.positions.back() = world.transformVector(
+                            {component(td.pos, i, 0), component(td.pos, i, 1), component(td.pos, i, 2)});
+                    if (td.hasNrm)
+                        mt.normals.back() = world.transformVector(
+                            {component(td.nrm, i, 0), component(td.nrm, i, 1), component(td.nrm, i, 2)});
+                }
                 if (skin)
                 {
                     VertexSkin vs;
@@ -658,7 +799,7 @@ struct Loader
                 }
             }
         }
-        takeMaterial(static_cast<long>(number(prim.find("material"), -1)));
+        addPart(static_cast<long>(number(prim.find("material"), -1)), firstVertex);
         return true;
     }
 
@@ -687,6 +828,91 @@ struct Loader
                math::Mat4::scale({sv[0], sv[1], sv[2]});
     }
 
+    void readMorphInfo(const Value& node, const Value& meshValue)
+    {
+        if (mesh->morphTargets.empty())
+            return;
+        if (mesh->morphWeights.empty())
+        {
+            const Array* w = array(node, "weights");
+            if (!w)
+                w = array(meshValue, "weights");
+            if (w)
+                for (const Value& v : *w)
+                    mesh->morphWeights.push_back(static_cast<float>(number(&v, 0.0)));
+        }
+        if (const Value* extras = meshValue.find("extras"))
+            if (const Array* names = array(*extras, "targetNames"))
+                for (std::size_t i = 0; i < names->size() && i < mesh->morphTargets.size(); ++i)
+                    if (const auto* text = std::get_if<std::string>(&(*names)[i].v))
+                        if (mesh->morphTargets[i].name.empty())
+                            mesh->morphTargets[i].name = *text;
+    }
+
+    void readFileCamera(const Value& node, const math::Mat4& world)
+    {
+        const Value* ci = node.find("camera");
+        if (!ci)
+            return;
+        const Value* c = at("cameras", static_cast<long>(number(ci, -1)));
+        if (!c)
+            return;
+        FileCamera cam;
+        if (const Value* n = c->find("name"))
+            if (const auto* text = std::get_if<std::string>(&n->v))
+                cam.name = *text;
+        cam.world = world;
+        if (const Value* type = c->find("type"))
+            if (const auto* text = std::get_if<std::string>(&type->v))
+                cam.orthographic = *text == "orthographic";
+        const Value* body = c->find(cam.orthographic ? "orthographic" : "perspective");
+        if (body)
+        {
+            cam.nearZ = static_cast<float>(number(body->find("znear"), 0.1));
+            cam.farZ  = static_cast<float>(number(body->find("zfar"), 1000.0));
+            if (!cam.orthographic)
+                cam.fovYDegrees = static_cast<float>(number(body->find("yfov"), 1.0471976)) * 57.29578f;
+        }
+        mesh->cameras.push_back(std::move(cam));
+    }
+
+    void readFileLight(const Value& node, const math::Mat4& world)
+    {
+        const Value* ext = node.find("extensions");
+        const Value* ref = ext ? ext->find("KHR_lights_punctual") : nullptr;
+        if (!ref)
+            return;
+        const Value* rootExt  = root.find("extensions");
+        const Value* rootBody = rootExt ? rootExt->find("KHR_lights_punctual") : nullptr;
+        const Array* lights   = rootBody ? array(*rootBody, "lights") : nullptr;
+        const long index      = static_cast<long>(number(ref->find("light"), -1));
+        if (!lights || index < 0 || static_cast<std::size_t>(index) >= lights->size())
+            return;
+        const Value& l = (*lights)[static_cast<std::size_t>(index)];
+        FileLight light;
+        light.world = world;
+        if (const Value* n = l.find("name"))
+            if (const auto* text = std::get_if<std::string>(&n->v))
+                light.name = *text;
+        if (const Value* type = l.find("type"))
+            if (const auto* text = std::get_if<std::string>(&type->v))
+                light.type = *text == "spot"          ? FileLightType::Spot
+                             : *text == "directional" ? FileLightType::Directional
+                                                      : FileLightType::Point;
+        if (const Value* c = l.find("color"))
+            if (const auto* a = std::get_if<Array>(&c->v); a && a->size() == 3)
+                for (std::size_t i = 0; i < 3; ++i)
+                    light.color[i] = static_cast<float>(number(&(*a)[i], 1.0));
+        light.intensity = static_cast<float>(number(l.find("intensity"), 1.0));
+        light.range     = static_cast<float>(number(l.find("range"), 0.0));
+        if (const Value* spot = l.find("spot"))
+        {
+            light.innerAngleDegrees = static_cast<float>(number(spot->find("innerConeAngle"), 0.0)) * 57.29578f;
+            light.outerAngleDegrees = static_cast<float>(number(spot->find("outerConeAngle"), 0.7853982)) * 57.29578f;
+        }
+        mesh->lights.push_back(std::move(light));
+    }
+
     bool visit(long nodeIndex, const math::Mat4& parent, int depth)
     {
         if (depth > 64)
@@ -698,10 +924,15 @@ struct Loader
         currentSkin            = static_cast<long>(number(node->find("skin"), -1));
         if (const Value* mi = node->find("mesh"))
             if (const Value* m = at("meshes", static_cast<long>(number(mi, -1))))
+            {
                 if (const Array* prims = array(*m, "primitives"))
                     for (const Value& p : *prims)
                         if (!primitive(p, world))
                             return false;
+                readMorphInfo(*node, *m);
+            }
+        readFileCamera(*node, world);
+        readFileLight(*node, world);
         if (const Array* kids = array(*node, "children"))
             for (const Value& k : *kids)
                 if (!visit(static_cast<long>(number(&k, -1)), world, depth + 1))
@@ -784,6 +1015,12 @@ struct Loader
         }
         if (mesh->vertices.empty())
             return fail("has no triangles");
+        if (!mesh->parts.empty())
+        {
+            std::copy(std::begin(mesh->parts.front().baseColor), std::end(mesh->parts.front().baseColor), mesh->baseColor);
+            mesh->texturePath = mesh->parts.front().texturePath;
+            mesh->material    = mesh->parts.front().material;
+        }
         if (skin)
         {
             skinVerts.resize(mesh->vertices.size());
