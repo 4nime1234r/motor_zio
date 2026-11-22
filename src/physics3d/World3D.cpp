@@ -453,6 +453,20 @@ BodyHandle World3D::createBody(const BodyDesc& desc)
             const float inverse = inertia > 0.f ? 1.f / inertia : 0.f;
             body.invInertia     = Vec3{inverse, inverse, inverse};
         }
+        else if (const auto* capsule = std::get_if<CapsuleShape>(&desc.shape))
+        {
+            const float r  = capsule->radius;
+            const float h2 = capsule->halfHeight * 2.f;
+            const float ia = 0.5f * mass * r * r;
+            const float ib = mass * (3.f * r * r + h2 * h2) / 12.f + 0.2f * mass * r * r;
+            body.invInertia = Vec3{1.f / ib, 1.f / ia, 1.f / ib};
+        }
+        else if (std::holds_alternative<MeshShape>(desc.shape))
+        {
+            body.invMass    = 0.f;
+            body.invInertia = Vec3::zero();
+            body.type       = BodyType::Static;
+        }
         else
         {
             const Vec3 h = std::get<BoxShape>(desc.shape).halfExtents;

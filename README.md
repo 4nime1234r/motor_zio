@@ -32,7 +32,7 @@ Zio es de uso libre, pero no se puede vender: puedes usarlo y modificarlo gratis
 **Sistemas del motor**
 - Física 2D con cuerpos estáticos y dinámicos, rectángulos y círculos, gravedad, impulsos y rebote.
 - Capas, máscaras de colisión, triggers con eventos de entrada y salida y articulaciones (distancia, bola, bisagra y fija) en la física 3D, y distancia, soldadura, capas y triggers en la 2D.
-- Física 3D con cuerpos rígidos (estáticos, dinámicos y cinemáticos), esferas y cajas orientadas, rotación con inercia, fricción, rebote, impulsos y fuerzas, y rayos.
+- Física 3D con cuerpos rígidos (estáticos, dinámicos y cinemáticos), esferas, cápsulas, cajas orientadas y mallas de triángulos estáticas, rotación con inercia, fricción, rebote, impulsos y fuerzas, y rayos.
 - Scripts de C++ y de C# para los nodos, con `onStart`, `onUpdate` y `onDestroy` (`OnStart`, `OnUpdate` y `OnDestroy` en C#), que se guardan en la escena. Los de C++ y los de C# se compilan solos desde el editor y se ejecutan también con el botón Jugar (ver [Scripts](#scripts)).
 - Audio con clips, volumen y tono, por sonido o por categoría.
 - Ventana con pantalla completa, maximizada o normal (`Window::setMode`) y selector de archivos del sistema (`platform::openFileDialog`).

@@ -1,5 +1,6 @@
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 #include "zio/physics3d/World3D.h"
 
@@ -216,6 +217,92 @@ void handles()
 
 }
 
+MeshShape groundMesh()
+{
+    std::vector<Vec3> tris = {{-20.f, 0.f, -20.f}, {-20.f, 0.f, 20.f}, {20.f, 0.f, 20.f},
+                              {-20.f, 0.f, -20.f}, {20.f, 0.f, 20.f},  {20.f, 0.f, -20.f}};
+    return makeMeshShape(tris);
+}
+
+void capsules()
+{
+    World3D world;
+    ground(world);
+    BodyDesc desc;
+    desc.position = {0.f, 3.f, 0.f};
+    desc.shape    = CapsuleShape{0.4f, 0.6f};
+    const BodyHandle standing = world.createBody(desc);
+    run(world, 3.f);
+    check(std::fabs(world.position(standing).y - 1.0f) < 0.08f, "una capsula de pie se apoya en el suelo", world.position(standing).y);
+
+    World3D lying;
+    ground(lying);
+    desc.position = {0.f, 3.f, 0.f};
+    desc.rotation = Quaternion::fromAxisAngle({0.f, 0.f, 1.f}, 90.f);
+    const BodyHandle flat = lying.createBody(desc);
+    run(lying, 3.f);
+    check(std::fabs(lying.position(flat).y - 0.4f) < 0.08f, "una capsula tumbada se apoya sobre su lado", lying.position(flat).y);
+
+    World3D pair;
+    desc.rotation = Quaternion::identity();
+    desc.position = {0.f, 5.f, 0.f};
+    ground(pair);
+    const BodyHandle top = pair.createBody(desc);
+    desc.position = {0.f, 2.f, 0.f};
+    const BodyHandle bottom = pair.createBody(desc);
+    run(pair, 4.f);
+    check(pair.position(top).y > pair.position(bottom).y + 1.0f, "una capsula cae sobre otra y no la atraviesa", pair.position(top).y);
+
+    World3D ball;
+    ground(ball);
+    BodyDesc sphere;
+    sphere.position = {0.f, 3.f, 0.f};
+    sphere.shape    = SphereShape{0.4f};
+    const BodyHandle s = ball.createBody(sphere);
+    run(ball, 3.f);
+    check(std::fabs(ball.position(s).y - 0.4f) < 0.05f, "la esfera sigue apoyandose tras agregar capsulas");
+
+    World3D rays;
+    BodyDesc capsule;
+    capsule.type     = BodyType::Static;
+    capsule.position = {0.f, 0.f, 0.f};
+    capsule.shape    = CapsuleShape{0.5f, 1.f};
+    rays.createBody(capsule);
+    const auto side = rays.raycast({5.f, 0.f, 0.f}, {-1.f, 0.f, 0.f}, 20.f);
+    check(side && std::fabs(side->distance - 4.5f) < 0.01f, "un rayo golpea el costado de la capsula", side ? side->distance : -1.f);
+    const auto cap = rays.raycast({0.f, 5.f, 0.f}, {0.f, -1.f, 0.f}, 20.f);
+    check(cap && std::fabs(cap->distance - 3.5f) < 0.01f, "un rayo golpea la punta de la capsula", cap ? cap->distance : -1.f);
+}
+
+void meshes()
+{
+    World3D world;
+    BodyDesc terrain;
+    terrain.type  = BodyType::Static;
+    terrain.shape = groundMesh();
+    world.createBody(terrain);
+
+    BodyDesc ball;
+    ball.position = {0.f, 3.f, 0.f};
+    ball.shape    = SphereShape{0.5f};
+    const BodyHandle s = world.createBody(ball);
+    BodyDesc box;
+    box.position = {4.f, 3.f, 0.f};
+    box.shape    = BoxShape{{0.5f, 0.5f, 0.5f}};
+    const BodyHandle b = world.createBody(box);
+    BodyDesc capsule;
+    capsule.position = {-4.f, 3.f, 0.f};
+    capsule.shape    = CapsuleShape{0.4f, 0.6f};
+    const BodyHandle c = world.createBody(capsule);
+    run(world, 4.f);
+    check(std::fabs(world.position(s).y - 0.5f) < 0.06f, "una esfera se apoya en una malla", world.position(s).y);
+    check(std::fabs(world.position(b).y - 0.5f) < 0.08f, "una caja se apoya en una malla", world.position(b).y);
+    check(std::fabs(world.position(c).y - 1.0f) < 0.08f, "una capsula se apoya en una malla", world.position(c).y);
+
+    const auto hit = world.raycast({1.f, 5.f, 1.f}, {0.f, -1.f, 0.f}, 20.f);
+    check(hit && hit->body == 1 && std::fabs(hit->distance - 5.f) < 0.01f, "un rayo golpea la malla", hit ? hit->distance : -1.f);
+}
+
 void layersAndMasks()
 {
     World3D world;
@@ -369,6 +456,8 @@ int main()
     impulses();
     handles();
     layersAndMasks();
+    capsules();
+    meshes();
     triggers();
     joints();
 

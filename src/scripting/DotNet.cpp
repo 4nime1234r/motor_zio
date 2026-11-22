@@ -98,6 +98,7 @@ struct NativeApi
     void(__cdecl* destroyJoint)(unsigned);
     int(__cdecl* triggerEventCount)();
     int(__cdecl* getTriggerEvent)(int, unsigned*, unsigned*, int*);
+    unsigned(__cdecl* createMeshBody)(void*);
 };
 
 scene3d::Node3D* asNode(void* node)
@@ -320,7 +321,9 @@ unsigned __cdecl apiCreateBody(int type, int shape, const float* shapeParams, co
     desc.mass        = mass;
     desc.restitution = restitution;
     desc.friction    = friction;
-    if (shape == 1)
+    if (shape == 2)
+        desc.shape = physics3d::CapsuleShape{shapeParams[0], shapeParams[1]};
+    else if (shape == 1)
         desc.shape = physics3d::BoxShape{vec3(shapeParams)};
     else
         desc.shape = physics3d::SphereShape{shapeParams[0]};
@@ -476,6 +479,23 @@ void __cdecl apiSetCategoryVolume(int category, float volume)
 {
     audio::AudioManager::instance().setCategoryVolume(category == 1 ? audio::Category::Music : audio::Category::Sfx,
                                                        volume);
+}
+
+unsigned __cdecl apiCreateMeshBody(void* node)
+{
+    auto* mesh = node ? dynamic_cast<scene3d::MeshNode*>(asNode(node)) : nullptr;
+    if (!mesh || !mesh->mesh())
+        return 0;
+    const math::Mat4 world = mesh->worldMatrix();
+    std::vector<math::Vec3> triangles;
+    const auto& vertices = mesh->mesh()->vertices;
+    triangles.reserve(vertices.size());
+    for (const auto& vertex : vertices)
+        triangles.push_back(world.transformPoint(vertex.position));
+    physics3d::BodyDesc desc;
+    desc.type  = physics3d::BodyType::Static;
+    desc.shape = physics3d::makeMeshShape(std::move(triangles));
+    return physics3d::World3D::instance().createBody(desc);
 }
 
 void __cdecl apiSetBodyFilter(unsigned body, unsigned layer, unsigned mask, int trigger)
@@ -860,6 +880,7 @@ bool DotNetRuntime::start(const fs::path& workDir, std::string* error)
     impl_->api.loadScene         = apiLoadScene;
     impl_->api.instantiate       = apiInstantiate;
     impl_->api.setBodyFilter     = apiSetBodyFilter;
+    impl_->api.createMeshBody    = apiCreateMeshBody;
     impl_->api.createJoint       = apiCreateJoint;
     impl_->api.destroyJoint      = apiDestroyJoint;
     impl_->api.triggerEventCount = apiTriggerEventCount;

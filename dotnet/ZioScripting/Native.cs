@@ -55,6 +55,7 @@ internal unsafe struct NativeApi
     public delegate* unmanaged<uint, void> destroyJoint;
     public delegate* unmanaged<int> triggerEventCount;
     public delegate* unmanaged<int, uint*, uint*, int*, int> getTriggerEvent;
+    public delegate* unmanaged<IntPtr, uint> createMeshBody;
 }
 
 internal static class Native

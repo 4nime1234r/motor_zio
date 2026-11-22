@@ -123,6 +123,18 @@ public readonly unsafe struct Body : IEquatable<Body>
         return new Body(Native.Api.createBody((int)kind, 1, shape, at, mass, restitution, friction));
     }
 
+    public static Body CreateCapsule(BodyKind kind, Vector3 position, float radius, float halfHeight, float mass = 1f, float restitution = 0.2f, float friction = 0.5f)
+    {
+        float* shape = stackalloc float[3] { radius, halfHeight, 0f };
+        float* at = stackalloc float[3] { position.X, position.Y, position.Z };
+        return new Body(Native.Api.createBody((int)kind, 2, shape, at, mass, restitution, friction));
+    }
+
+    public static Body CreateMesh(Node meshNode)
+    {
+        return new Body(meshNode == null ? 0u : Native.Api.createMeshBody(meshNode.Handle));
+    }
+
     public void Destroy()
     {
         Native.Api.destroyBody(Handle);
