@@ -169,6 +169,86 @@ int main()
     node.update(2.f);
     check(!node.isAnimationPlaying(), "sin bucle se detiene al terminar");
 
+    {
+        const auto matrixNear = [](const zio::math::Mat4& a, const zio::math::Mat4& b) {
+            for (int r = 0; r < 4; ++r)
+                for (int c = 0; c < 4; ++c)
+                    if (std::fabs(a.m[r][c] - b.m[r][c]) > 2e-3f)
+                        return false;
+            return true;
+        };
+        std::vector<zio::math::Mat4> bent, rest;
+        mesh->skin->skinMatrices(mesh->skin->findClip("doblar"), 1.f, bent);
+        mesh->skin->skinMatrices(nullptr, 0.f, rest);
+
+        MeshNode layered;
+        layered.setMeshSource(path.string(), &error);
+        const std::size_t layer = layered.addLayer("codo");
+        check(layered.layerCount() == 1, "se agrega una capa de animacion");
+        check(!layered.playLayer(layer, "no_existe"), "una capa con animacion inexistente falla");
+        check(layered.playLayer(layer, "doblar", false), "una capa reproduce una animacion");
+        layered.update(1.f);
+        const auto& matrices = layered.skinMatrices();
+        check(matrices.size() == 2 && matrixNear(matrices[0], rest[0]), "la mascara deja quieto el hueso fuera de la capa");
+        check(matrices.size() == 2 && matrixNear(matrices[1], bent[1]), "la capa mueve los huesos de su mascara");
+
+        layered.setLayerWeight(layer, 0.f);
+        layered.playLayer(layer, "doblar", false);
+        layered.update(1.f);
+        check(layered.skinMatrices().size() == 2 && matrixNear(layered.skinMatrices()[1], rest[1]),
+              "una capa con peso cero no cambia la pose");
+        layered.removeLayers();
+        check(layered.layerCount() == 0, "se quitan las capas");
+    }
+    {
+        auto graph = std::make_shared<AnimationGraph>();
+        graph->addState("quieto", "", true);
+        graph->addState("doblado", "doblar", false);
+        GraphTransition go;
+        go.from      = "quieto";
+        go.to        = "doblado";
+        go.parameter = "doblar";
+        go.compare   = Compare::Trigger;
+        go.fade      = 0.f;
+        graph->addTransition(go);
+        GraphTransition back;
+        back.from      = "doblado";
+        back.to        = "quieto";
+        back.parameter = "fuerza";
+        back.compare   = Compare::Less;
+        back.value     = 0.5f;
+        graph->addTransition(back);
+
+        GraphChange change;
+        check(graph->update(change) && change.state == "quieto", "la maquina de estados entra en el estado inicial");
+        check(!graph->update(change), "sin condiciones no cambia de estado");
+        graph->setFloat("fuerza", 1.f);
+        graph->trigger("doblar");
+        check(graph->update(change) && change.state == "doblado" && change.clip == "doblar", "un trigger dispara la transicion");
+        check(!graph->update(change), "el trigger se consume");
+        graph->setFloat("fuerza", 0.1f);
+        check(graph->update(change) && change.state == "quieto", "una condicion numerica cambia de estado");
+
+        MeshNode driven;
+        driven.setMeshSource(path.string(), &error);
+        auto nodeGraph = std::make_shared<AnimationGraph>();
+        nodeGraph->addState("quieto", "", true);
+        nodeGraph->addState("doblado", "doblar", true);
+        GraphTransition t;
+        t.from      = "quieto";
+        t.to        = "doblado";
+        t.parameter = "ir";
+        t.compare   = Compare::IsTrue;
+        t.fade      = 0.f;
+        nodeGraph->addTransition(t);
+        driven.setAnimationGraph(nodeGraph);
+        driven.update(0.1f);
+        check(!driven.isAnimationPlaying(), "el nodo arranca en el estado quieto del grafo");
+        nodeGraph->setBool("ir", true);
+        driven.update(0.1f);
+        check(driven.isAnimationPlaying() && driven.currentAnimation() == "doblar", "el grafo reproduce la animacion del nuevo estado");
+    }
+
     Scene3D scene;
     auto* first = scene.root().addChild<MeshNode>();
     first->setName("brazo");

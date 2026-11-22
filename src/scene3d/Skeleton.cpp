@@ -141,6 +141,53 @@ void Skin::blendPoses(const std::vector<JointPose>& from, const std::vector<Join
     }
 }
 
+std::vector<float> Skin::jointMask(const std::string& rootJoint) const
+{
+    std::vector<float> mask(joints.size(), rootJoint.empty() ? 1.f : 0.f);
+    if (rootJoint.empty())
+        return mask;
+    int root = -1;
+    for (std::size_t i = 0; i < joints.size(); ++i)
+        if (joints[i].name == rootJoint)
+            root = static_cast<int>(i);
+    if (root < 0)
+        return mask;
+    for (std::size_t i = 0; i < joints.size(); ++i)
+    {
+        int walk = static_cast<int>(i);
+        for (std::size_t guard = 0; walk >= 0 && guard <= joints.size(); ++guard)
+        {
+            if (walk == root)
+            {
+                mask[i] = 1.f;
+                break;
+            }
+            walk = joints[static_cast<std::size_t>(walk)].parent;
+        }
+    }
+    return mask;
+}
+
+void Skin::blendMasked(std::vector<JointPose>& base, const std::vector<JointPose>& overlay,
+                       const std::vector<float>& weights)
+{
+    const std::size_t n = std::min({base.size(), overlay.size(), weights.size()});
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const float t = std::clamp(weights[i], 0.f, 1.f);
+        if (t <= 0.f)
+            continue;
+        JointPose& a       = base[i];
+        const JointPose& b = overlay[i];
+        a.translation      = {a.translation.x + (b.translation.x - a.translation.x) * t,
+                              a.translation.y + (b.translation.y - a.translation.y) * t,
+                              a.translation.z + (b.translation.z - a.translation.z) * t};
+        a.scale            = {a.scale.x + (b.scale.x - a.scale.x) * t, a.scale.y + (b.scale.y - a.scale.y) * t,
+                              a.scale.z + (b.scale.z - a.scale.z) * t};
+        a.rotation         = math::Quaternion::slerp(a.rotation, b.rotation, t);
+    }
+}
+
 void Skin::skinMatrices(const std::vector<JointPose>& pose, std::vector<math::Mat4>& out) const
 {
     const std::size_t count = joints.size();

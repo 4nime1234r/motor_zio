@@ -391,8 +391,101 @@ void MeshNode::sampleMorph(const MorphClip& clip)
         pose();
 }
 
+std::size_t MeshNode::addLayer(const std::string& rootJoint)
+{
+    AnimationLayer layer;
+    layer.root = rootJoint;
+    layers_.push_back(std::move(layer));
+    return layers_.size() - 1;
+}
+
+bool MeshNode::playLayer(std::size_t layer, const std::string& clip, bool loop)
+{
+    if (layer >= layers_.size() || !mesh_ || !mesh_->skin || !mesh_->skin->findClip(clip))
+        return false;
+    layers_[layer].clip    = clip;
+    layers_[layer].loop    = loop;
+    layers_[layer].time    = 0.f;
+    layers_[layer].playing = true;
+    layers_[layer].active  = true;
+    pose();
+    return true;
+}
+
+void MeshNode::stopLayer(std::size_t layer)
+{
+    if (layer >= layers_.size())
+        return;
+    layers_[layer].playing = false;
+    layers_[layer].active  = false;
+    pose();
+}
+
+void MeshNode::setLayerWeight(std::size_t layer, float weight)
+{
+    if (layer < layers_.size())
+        layers_[layer].weight = std::clamp(weight, 0.f, 1.f);
+}
+
+float MeshNode::layerWeight(std::size_t layer) const
+{
+    return layer < layers_.size() ? layers_[layer].weight : 0.f;
+}
+
+void MeshNode::removeLayers()
+{
+    layers_.clear();
+    pose();
+}
+
+void MeshNode::setAnimationGraph(std::shared_ptr<AnimationGraph> graph)
+{
+    graph_ = std::move(graph);
+    if (graph_)
+        graph_->reset();
+}
+
 void MeshNode::update(float dt)
 {
+    if (graph_ && mesh_ && mesh_->skin)
+    {
+        GraphChange change;
+        if (graph_->update(change))
+        {
+            const float saved = animSpeed_;
+            playAnimation(change.clip, change.loop, change.fade);
+            animSpeed_ = change.speed > 0.f ? change.speed : saved;
+        }
+    }
+    bool layersMoved = false;
+    if (mesh_ && mesh_->skin)
+        for (AnimationLayer& layer : layers_)
+        {
+            if (!layer.playing)
+                continue;
+            const AnimationClip* clip = mesh_->skin->findClip(layer.clip);
+            if (!clip)
+            {
+                layer.playing = false;
+                layer.active  = false;
+                continue;
+            }
+            layer.time += dt * animSpeed_;
+            if (clip->duration > 0.f)
+            {
+                if (layer.loop)
+                    layer.time = std::fmod(layer.time, clip->duration);
+                else if (layer.time >= clip->duration)
+                {
+                    layer.time    = clip->duration;
+                    layer.playing = false;
+                }
+            }
+            layersMoved = true;
+        }
+    if (layersMoved && !animPlaying_)
+        pose();
+
     if (morphPlaying_ && mesh_)
     {
         const MorphClip* playing = nullptr;
@@ -458,19 +551,34 @@ void MeshNode::pose()
     if (!mesh_ || !mesh_->skin)
         return;
     const AnimationClip* clip = mesh_->skin->findClip(animName_);
-    std::vector<math::Mat4> matrices;
+    std::vector<JointPose> current;
     if (isBlending())
     {
-        std::vector<JointPose> from, to, mixed;
+        std::vector<JointPose> from, to;
         mesh_->skin->samplePose(mesh_->skin->findClip(prevName_), prevTime_, from);
         mesh_->skin->samplePose(clip, animTime_, to);
-        Skin::blendPoses(from, to, fadeElapsed_ / fadeDuration_, mixed);
-        mesh_->skin->skinMatrices(mixed, matrices);
+        Skin::blendPoses(from, to, fadeElapsed_ / fadeDuration_, current);
     }
     else
     {
-        mesh_->skin->skinMatrices(clip, animTime_, matrices);
+        mesh_->skin->samplePose(clip, animTime_, current);
     }
+    for (const AnimationLayer& layer : layers_)
+    {
+        if (!layer.active || layer.weight <= 0.f)
+            continue;
+        const AnimationClip* layerClip = mesh_->skin->findClip(layer.clip);
+        if (!layerClip)
+            continue;
+        std::vector<JointPose> overlay;
+        mesh_->skin->samplePose(layerClip, layer.time, overlay);
+        std::vector<float> weights = mesh_->skin->jointMask(layer.root);
+        for (float& w : weights)
+            w *= layer.weight;
+        Skin::blendMasked(current, overlay, weights);
+    }
+    std::vector<math::Mat4>& matrices = skinMatrices_;
+    mesh_->skin->skinMatrices(current, matrices);
     if (!posed_)
         posed_ = std::make_shared<Mesh>();
     posed_->dynamic = true;

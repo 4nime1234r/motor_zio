@@ -11,6 +11,7 @@
 #include "zio/math/Vec3.h"
 #include "zio/renderer/Color.h"
 #include "zio/renderer/Texture.h"
+#include "zio/scene3d/AnimationGraph.h"
 #include "zio/scene3d/Mesh.h"
 #include "zio/scene3d/Renderer3D.h"
 #include "zio/scripting/Script.h"
@@ -134,6 +135,18 @@ public:
     void setMorphWeight(std::size_t index, float weight);
     float morphWeight(std::size_t index) const { return index < morphWeights_.size() ? morphWeights_[index] : 0.f; }
 
+    std::size_t addLayer(const std::string& rootJoint = {});
+    bool playLayer(std::size_t layer, const std::string& clip, bool loop = true);
+    void stopLayer(std::size_t layer);
+    void setLayerWeight(std::size_t layer, float weight);
+    float layerWeight(std::size_t layer) const;
+    std::size_t layerCount() const { return layers_.size(); }
+    void removeLayers();
+
+    void setAnimationGraph(std::shared_ptr<AnimationGraph> graph);
+    const std::shared_ptr<AnimationGraph>& animationGraph() const { return graph_; }
+    const std::vector<math::Mat4>& skinMatrices() const { return skinMatrices_; }
+
     std::vector<std::string> morphAnimationNames() const;
     bool playMorphAnimation(const std::string& name, bool loop = true);
     void stopMorphAnimation() { morphPlaying_ = false; }
@@ -176,6 +189,19 @@ private:
         std::shared_ptr<renderer::Texture> occlusion;
     };
     std::vector<MaterialTextures> materialTextures_;
+    struct AnimationLayer
+    {
+        std::string clip;
+        std::string root;
+        float time    = 0.f;
+        float weight  = 1.f;
+        bool loop     = true;
+        bool playing  = false;
+        bool active   = false;
+    };
+    std::vector<AnimationLayer> layers_;
+    std::vector<math::Mat4> skinMatrices_;
+    std::shared_ptr<AnimationGraph> graph_;
     std::vector<float> morphWeights_;
     std::string morphClip_;
     float morphTime_     = 0.f;

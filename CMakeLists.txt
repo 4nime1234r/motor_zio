@@ -67,6 +67,7 @@ add_library(engine STATIC
     src/scripting/Language.cpp
     src/scripting/ZioLanguage.cpp
     src/scene3d/Skeleton.cpp
+    src/scene3d/AnimationGraph.cpp
     src/scene3d/Mesh.cpp
     src/scene3d/Node3D.cpp
     src/scene3d/Renderer3D.cpp

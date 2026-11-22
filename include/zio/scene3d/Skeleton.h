@@ -82,6 +82,9 @@ struct ZIO_API Skin
     void samplePose(const AnimationClip* clip, float time, std::vector<JointPose>& out) const;
     static void blendPoses(const std::vector<JointPose>& from, const std::vector<JointPose>& to, float t,
                            std::vector<JointPose>& out);
+    std::vector<float> jointMask(const std::string& rootJoint) const;
+    static void blendMasked(std::vector<JointPose>& base, const std::vector<JointPose>& overlay,
+                            const std::vector<float>& weights);
     void skinMatrices(const std::vector<JointPose>& pose, std::vector<math::Mat4>& out) const;
     void skinMatrices(const AnimationClip* clip, float time, std::vector<math::Mat4>& out) const;
 
