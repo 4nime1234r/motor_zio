@@ -326,6 +326,56 @@ public readonly unsafe struct Sound
     {
         Native.Api.setSound(Handle, 1, pitch);
     }
+
+    public void SetPosition(Vector3 position)
+    {
+        float* v = stackalloc float[3] { position.X, position.Y, position.Z };
+        Native.Api.setSoundPosition(Handle, v);
+    }
+}
+
+public enum AudioEffect
+{
+    Reverb = 0,
+    LowPass = 1,
+    HighPass = 2
+}
+
+public readonly unsafe struct Bus
+{
+    public readonly uint Handle;
+
+    internal Bus(uint handle)
+    {
+        Handle = handle;
+    }
+
+    public bool IsValid => Handle != 0;
+
+    public static Bus Create(string name, Bus parent = default)
+    {
+        return new Bus(Native.WithUtf8(name, (p, n) => Native.Api.createBus((byte*)p, n, parent.Handle)));
+    }
+
+    public static Bus Find(string name)
+    {
+        return new Bus(Native.WithUtf8(name, (p, n) => Native.Api.findBus((byte*)p, n)));
+    }
+
+    public void SetVolume(float volume)
+    {
+        Native.Api.setBusVolume(Handle, volume);
+    }
+
+    public bool SetEffect(AudioEffect effect, float value)
+    {
+        return Native.Api.setBusEffect(Handle, (int)effect, value) != 0;
+    }
+
+    public void ClearEffects()
+    {
+        Native.Api.clearBusEffects(Handle);
+    }
 }
 
 public static unsafe class Audio
@@ -334,6 +384,21 @@ public static unsafe class Audio
     {
         uint voice = Native.WithUtf8(path, (p, n) => Native.Api.playSound((byte*)p, n, volume, pitch, loop ? 1 : 0, (int)category));
         return new Sound(voice);
+    }
+
+    public static Sound PlayAt(string path, Vector3 position, float volume = 1f, float pitch = 1f, bool loop = false, Bus bus = default, float minDistance = 1f, float maxDistance = 50f)
+    {
+        float* at = stackalloc float[3] { position.X, position.Y, position.Z };
+        uint voice = Native.WithUtf8(path, (p, n) => Native.Api.playSoundEx((byte*)p, n, volume, pitch, loop ? 1 : 0, bus.Handle, 0, 1, at, minDistance, maxDistance));
+        return new Sound(voice);
+    }
+
+    public static void SetListener(Vector3 position, Vector3 forward, Vector3 up)
+    {
+        float* p = stackalloc float[3] { position.X, position.Y, position.Z };
+        float* f = stackalloc float[3] { forward.X, forward.Y, forward.Z };
+        float* u = stackalloc float[3] { up.X, up.Y, up.Z };
+        Native.Api.setListener(p, f, u);
     }
 
     public static void SetCategoryVolume(SoundCategory category, float volume)

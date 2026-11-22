@@ -93,6 +93,10 @@ int main()
                 "        var capsula = Body.CreateCapsule(BodyKind.Dynamic, new Vector3(0f, 20f, 0f), 0.4f, 0.6f);\n"
                 "        var suelo = Body.CreateMesh(bala);\n"
                 "        if (capsula.IsValid && suelo.IsValid) Log.Info(\"formas ok\");\n"
+                "        Audio.SetListener(Vector3.Zero, -Vector3.UnitZ, Vector3.UnitY);\n"
+                "        var canal = Bus.Create(\"canal\"); canal.SetVolume(0.5f); canal.ClearEffects();\n"
+                "        var eco = Audio.PlayAt(\"no_existe.wav\", Vector3.One, bus: canal); eco.SetPosition(Vector3.Zero);\n"
+                "        Log.Info(\"audio api ok\");\n"
                 "        var zona = Body.CreateBox(BodyKind.Static, new Vector3(9f, 0f, 0f), new Vector3(1f, 1f, 1f));\n"
                 "        zona.SetFilter(1u, 0xFFFFFFFFu, true);\n"
                 "        var union = Joint.Create(JointKind.Distance, cuerpo, par, Vector3.Zero, default, 3f);\n"
@@ -167,6 +171,7 @@ int main()
     check(foco && near(foco->intensity(), 2.f) && near(foco->range(), 15.f), "el nodo de luz toma sus valores");
     const auto logLines = scripting::DotNetRuntime::takeLog();
     check(contains(logLines, "busqueda ok"), "FindChild encuentra un hijo y devuelve null si no existe");
+    check(contains(logLines, "audio api ok"), "un script usa buses, oyente y sonido posicional");
     check(contains(logLines, "formas ok"), "un script crea una capsula y un cuerpo con la malla de un nodo");
     check(contains(logLines, "union creada"), "un script crea una articulacion y un trigger de fisica");
     check(contains(logLines, "sin sonido"), "reproducir un sonido que no existe no rompe nada");

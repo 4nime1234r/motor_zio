@@ -38,6 +38,7 @@ add_library(engine STATIC
     src/audio/AudioManager.cpp
     src/audio/Clip.cpp
     src/audio/ClipCache.cpp
+    src/audio/Spatial.cpp
     src/core/Application.cpp
     src/events/EventBus.cpp
     src/input/InputManager.cpp

@@ -99,6 +99,14 @@ struct NativeApi
     int(__cdecl* triggerEventCount)();
     int(__cdecl* getTriggerEvent)(int, unsigned*, unsigned*, int*);
     unsigned(__cdecl* createMeshBody)(void*);
+    unsigned(__cdecl* playSoundEx)(const char*, int, float, float, int, unsigned, int, int, const float*, float, float);
+    void(__cdecl* setListener)(const float*, const float*, const float*);
+    void(__cdecl* setSoundPosition)(unsigned, const float*);
+    unsigned(__cdecl* createBus)(const char*, int, unsigned);
+    unsigned(__cdecl* findBus)(const char*, int);
+    void(__cdecl* setBusVolume)(unsigned, float);
+    int(__cdecl* setBusEffect)(unsigned, int, float);
+    void(__cdecl* clearBusEffects)(unsigned);
 };
 
 scene3d::Node3D* asNode(void* node)
@@ -455,6 +463,68 @@ unsigned __cdecl apiPlaySound(const char* path, int length, float volume, float 
     params.loop     = loop != 0;
     params.category = category == 1 ? audio::Category::Music : audio::Category::Sfx;
     return manager.play(std::move(clip), params);
+}
+
+unsigned __cdecl apiPlaySoundEx(const char* path, int length, float volume, float pitch, int loop, unsigned bus,
+                               int category, int spatial, const float* position, float minDistance, float maxDistance)
+{
+    auto& manager = audio::AudioManager::instance();
+    if (!manager.isInitialized())
+        return 0;
+    auto clip = audio::ClipCache::instance().loadSync(text(path, length));
+    if (!clip)
+        return 0;
+    audio::PlayParams params;
+    params.volume      = volume;
+    params.pitch       = pitch;
+    params.loop        = loop != 0;
+    params.bus         = bus;
+    params.category    = category == 1 ? audio::Category::Music : audio::Category::Sfx;
+    params.spatial     = spatial != 0;
+    params.position    = vec3(position);
+    params.minDistance = minDistance;
+    params.maxDistance = maxDistance;
+    return manager.play(std::move(clip), params);
+}
+
+void __cdecl apiSetListener(const float* position, const float* forward, const float* up)
+{
+    audio::Listener listener;
+    listener.position = vec3(position);
+    listener.forward  = vec3(forward);
+    listener.up       = vec3(up);
+    audio::AudioManager::instance().setListener(listener);
+}
+
+void __cdecl apiSetSoundPosition(unsigned voice, const float* position)
+{
+    audio::AudioManager::instance().setPosition(voice, vec3(position));
+}
+
+unsigned __cdecl apiCreateBus(const char* name, int length, unsigned parent)
+{
+    return audio::AudioManager::instance().createBus(text(name, length), parent);
+}
+
+unsigned __cdecl apiFindBus(const char* name, int length)
+{
+    return audio::AudioManager::instance().findBus(text(name, length));
+}
+
+void __cdecl apiSetBusVolume(unsigned bus, float volume)
+{
+    audio::AudioManager::instance().setBusVolume(bus, volume);
+}
+
+int __cdecl apiSetBusEffect(unsigned bus, int effect, float value)
+{
+    const audio::Effect kind = effect == 1 ? audio::Effect::LowPass : effect == 2 ? audio::Effect::HighPass : audio::Effect::Reverb;
+    return audio::AudioManager::instance().setBusEffect(bus, kind, value) ? 1 : 0;
+}
+
+void __cdecl apiClearBusEffects(unsigned bus)
+{
+    audio::AudioManager::instance().clearBusEffects(bus);
 }
 
 void __cdecl apiStopSound(unsigned voice)
@@ -881,6 +951,14 @@ bool DotNetRuntime::start(const fs::path& workDir, std::string* error)
     impl_->api.instantiate       = apiInstantiate;
     impl_->api.setBodyFilter     = apiSetBodyFilter;
     impl_->api.createMeshBody    = apiCreateMeshBody;
+    impl_->api.playSoundEx       = apiPlaySoundEx;
+    impl_->api.setListener       = apiSetListener;
+    impl_->api.setSoundPosition  = apiSetSoundPosition;
+    impl_->api.createBus         = apiCreateBus;
+    impl_->api.findBus           = apiFindBus;
+    impl_->api.setBusVolume      = apiSetBusVolume;
+    impl_->api.setBusEffect      = apiSetBusEffect;
+    impl_->api.clearBusEffects   = apiClearBusEffects;
     impl_->api.createJoint       = apiCreateJoint;
     impl_->api.destroyJoint      = apiDestroyJoint;
     impl_->api.triggerEventCount = apiTriggerEventCount;

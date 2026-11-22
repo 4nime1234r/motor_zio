@@ -12,6 +12,7 @@ set(ZIO_TESTS
     PackageTest
     LightTest
     PrefabTest
+    AudioTest
 )
 
 foreach(testName IN LISTS ZIO_TESTS)

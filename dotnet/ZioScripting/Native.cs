@@ -56,6 +56,14 @@ internal unsafe struct NativeApi
     public delegate* unmanaged<int> triggerEventCount;
     public delegate* unmanaged<int, uint*, uint*, int*, int> getTriggerEvent;
     public delegate* unmanaged<IntPtr, uint> createMeshBody;
+    public delegate* unmanaged<byte*, int, float, float, int, uint, int, int, float*, float, float, uint> playSoundEx;
+    public delegate* unmanaged<float*, float*, float*, void> setListener;
+    public delegate* unmanaged<uint, float*, void> setSoundPosition;
+    public delegate* unmanaged<byte*, int, uint, uint> createBus;
+    public delegate* unmanaged<byte*, int, uint> findBus;
+    public delegate* unmanaged<uint, float, void> setBusVolume;
+    public delegate* unmanaged<uint, int, float, int> setBusEffect;
+    public delegate* unmanaged<uint, void> clearBusEffects;
 }
 
 internal static class Native

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string_view>
 
 #include "zio/audio/Clip.h"
 #include "zio/audio/Types.h"
@@ -32,6 +33,17 @@ public:
     bool isPlaying(VoiceHandle voice) const;
 
     void setCategoryVolume(Category category, float volume);
+
+    void setListener(const Listener& listener);
+    const Listener& listener() const;
+    void setPosition(VoiceHandle voice, const math::Vec3& position);
+
+    BusHandle bus(Category category) const;
+    BusHandle createBus(std::string_view name, BusHandle parent = kInvalidBusHandle);
+    BusHandle findBus(std::string_view name) const;
+    void setBusVolume(BusHandle bus, float volume);
+    bool setBusEffect(BusHandle bus, Effect effect, float value);
+    void clearBusEffects(BusHandle bus);
 
     void update();
 
