@@ -41,6 +41,7 @@ public:
     void bindPipeline(PipelineHandle pipeline);
     void bindVertexBuffer(BufferHandle buffer, std::uint32_t strideBytes);
     void bindTexture(TextureHandle texture, std::uint32_t slot = 0);
+    void bindMaterialTextures(const TextureHandle textures[4]);
     void bindInstanceBuffer(BufferHandle buffer);
     void draw(std::uint32_t vertexCount, std::uint32_t startVertex = 0, std::uint32_t instanceCount = 1);
 

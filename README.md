@@ -6,7 +6,7 @@
 
 Zio es un motor de juegos 2D y 3D escrito en C++20 para Windows y Linux. Renderiza con Vulkan e incluye un editor visual (por ahora solo para Windows) para montar escenas sin escribir código.
 
-Es un proyecto en desarrollo activo. La versión actual es la **0.3.0**.
+Es un proyecto en desarrollo activo. La versión actual es la **0.4.0**.
 
 Zio es de uso libre, pero no se puede vender: puedes usarlo y modificarlo gratis, dando crédito a su autor, y no puedes venderlo ni cobrar por él. Mira la sección [Licencia](#licencia).
 

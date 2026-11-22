@@ -6,9 +6,9 @@ const int kMaxTiles  = 13;
 layout(set = 0, binding = 0) uniform sampler2D tex;
 layout(set = 1, binding = 0) uniform sampler2D shadowMap;
 layout(set = 3, binding = 0) uniform sampler2D normalTex;
-layout(set = 4, binding = 0) uniform sampler2D mrTex;
-layout(set = 5, binding = 0) uniform sampler2D emissiveTex;
-layout(set = 6, binding = 0) uniform sampler2D occlusionTex;
+layout(set = 3, binding = 1) uniform sampler2D mrTex;
+layout(set = 3, binding = 2) uniform sampler2D emissiveTex;
+layout(set = 3, binding = 3) uniform sampler2D occlusionTex;
 
 layout(std140, set = 2, binding = 0) uniform Scene
 {

@@ -138,16 +138,27 @@ struct Device::Impl
         VkDeviceMemory memory         = VK_NULL_HANDLE;
         VkImageView view              = VK_NULL_HANDLE;
         VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+        VkSampler sampler             = VK_NULL_HANDLE;
     };
     std::vector<TextureSlot> textures;
+
+    struct MaterialSet
+    {
+        TextureHandle textures[4] = {};
+        VkDescriptorSet set       = VK_NULL_HANDLE;
+    };
+    std::vector<MaterialSet> materialSets;
+    VkDescriptorSetLayout materialSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool materialPool           = VK_NULL_HANDLE;
+    VkDescriptorSet dummyMaterialSet        = VK_NULL_HANDLE;
 
     VkPipeline cached_pipeline           = VK_NULL_HANDLE;
     VkBuffer cached_vertex_buffer        = VK_NULL_HANDLE;
     VkDeviceSize cached_vertex_offset    = 0;
     VkDescriptorSet cached_descriptor_set = VK_NULL_HANDLE;
-    static constexpr std::uint32_t kMaterialSlots = 4;
-    static constexpr std::uint32_t kLayoutSets    = 3 + kMaterialSlots;
-    VkDescriptorSet cached_material_sets[kMaterialSlots] = {};
+    static constexpr std::uint32_t kLayoutSets        = 4;
+    static constexpr std::uint32_t kMaxMaterialSets   = 512;
+    VkDescriptorSet cached_material_set               = VK_NULL_HANDLE;
 
     void resetBoundStateCache()
     {
@@ -155,8 +166,7 @@ struct Device::Impl
         cached_vertex_buffer  = VK_NULL_HANDLE;
         cached_vertex_offset  = 0;
         cached_descriptor_set = VK_NULL_HANDLE;
-        for (VkDescriptorSet& set : cached_material_sets)
-            set = VK_NULL_HANDLE;
+        cached_material_set   = VK_NULL_HANDLE;
         shadowSetBound        = false;
     }
 
@@ -716,9 +726,22 @@ struct Device::Impl
         if (deviceProps.limits.maxBoundDescriptorSets < kLayoutSets)
             return false;
 
-        VkDescriptorSetLayout setLayouts[kLayoutSets] = {descriptorSetLayout, descriptorSetLayout, uniformSetLayout};
-        for (std::uint32_t i = 0; i < kMaterialSlots; ++i)
-            setLayouts[3 + i] = descriptorSetLayout;
+        VkDescriptorSetLayoutBinding materialBindings[4]{};
+        for (std::uint32_t i = 0; i < 4; ++i)
+        {
+            materialBindings[i].binding         = i;
+            materialBindings[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            materialBindings[i].descriptorCount = 1;
+            materialBindings[i].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo materialLayoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        materialLayoutInfo.bindingCount = 4;
+        materialLayoutInfo.pBindings    = materialBindings;
+        if (vkCreateDescriptorSetLayout(device, &materialLayoutInfo, nullptr, &materialSetLayout) != VK_SUCCESS)
+            return false;
+
+        VkDescriptorSetLayout setLayouts[kLayoutSets] = {descriptorSetLayout, descriptorSetLayout, uniformSetLayout,
+                                                         materialSetLayout};
         VkPipelineLayoutCreateInfo plInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         plInfo.setLayoutCount = kLayoutSets;
         plInfo.pSetLayouts    = setLayouts;
@@ -728,6 +751,15 @@ struct Device::Impl
         static constexpr std::uint32_t kMaxDescriptorSets = 4096;
         VkDescriptorPoolSize poolSizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxDescriptorSets},
                                              {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1}};
+        VkDescriptorPoolSize materialPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxMaterialSets * 4 + 4};
+        VkDescriptorPoolCreateInfo materialPoolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        materialPoolInfo.flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        materialPoolInfo.maxSets       = kMaxMaterialSets + 1;
+        materialPoolInfo.poolSizeCount = 1;
+        materialPoolInfo.pPoolSizes    = &materialPoolSize;
+        if (vkCreateDescriptorPool(device, &materialPoolInfo, nullptr, &materialPool) != VK_SUCCESS)
+            return false;
+
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         poolInfo.maxSets       = kMaxDescriptorSets + 1;
         poolInfo.poolSizeCount = 2;
@@ -911,6 +943,24 @@ struct Device::Impl
         write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         write.pImageInfo      = &imageDescInfo;
         vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+
+        VkDescriptorSetAllocateInfo materialAlloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        materialAlloc.descriptorPool     = materialPool;
+        materialAlloc.descriptorSetCount = 1;
+        materialAlloc.pSetLayouts        = &materialSetLayout;
+        if (vkAllocateDescriptorSets(device, &materialAlloc, &dummyMaterialSet) != VK_SUCCESS)
+            return false;
+        VkWriteDescriptorSet materialWrites[4]{};
+        for (std::uint32_t i = 0; i < 4; ++i)
+        {
+            materialWrites[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            materialWrites[i].dstSet          = dummyMaterialSet;
+            materialWrites[i].dstBinding      = i;
+            materialWrites[i].descriptorCount = 1;
+            materialWrites[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            materialWrites[i].pImageInfo      = &imageDescInfo;
+        }
+        vkUpdateDescriptorSets(device, 4, materialWrites, 0, nullptr);
         return true;
     }
 
@@ -1212,6 +1262,10 @@ void Device::shutdown()
             vkDestroySampler(impl_->device, s, nullptr);
     if (impl_->descriptorPool)
         vkDestroyDescriptorPool(impl_->device, impl_->descriptorPool, nullptr);
+    if (impl_->materialPool)
+        vkDestroyDescriptorPool(impl_->device, impl_->materialPool, nullptr);
+    if (impl_->materialSetLayout)
+        vkDestroyDescriptorSetLayout(impl_->device, impl_->materialSetLayout, nullptr);
     if (impl_->pipelineLayout)
         vkDestroyPipelineLayout(impl_->device, impl_->pipelineLayout, nullptr);
     if (impl_->descriptorSetLayout)
@@ -1677,7 +1731,7 @@ TextureHandle Device::createTexture(const TextureDesc& desc)
     write.pImageInfo      = &imageDescInfo;
     vkUpdateDescriptorSets(impl_->device, 1, &write, 0, nullptr);
 
-    impl_->textures.push_back(Impl::TextureSlot{image, imageMemory, view, descriptorSet});
+    impl_->textures.push_back(Impl::TextureSlot{image, imageMemory, view, descriptorSet, imageDescInfo.sampler});
     return static_cast<TextureHandle>(impl_->textures.size());
 }
 
@@ -1688,9 +1742,22 @@ void Device::destroyTexture(TextureHandle handle)
     auto& tex = impl_->textures[handle - 1];
     if (tex.descriptorSet == impl_->cached_descriptor_set)
         impl_->cached_descriptor_set = VK_NULL_HANDLE;
-    for (VkDescriptorSet& cached : impl_->cached_material_sets)
-        if (cached == tex.descriptorSet)
-            cached = VK_NULL_HANDLE;
+    for (std::size_t i = 0; i < impl_->materialSets.size();)
+    {
+        auto& entry = impl_->materialSets[i];
+        bool uses   = false;
+        for (const TextureHandle used : entry.textures)
+            uses = uses || used == handle;
+        if (!uses)
+        {
+            ++i;
+            continue;
+        }
+        if (impl_->cached_material_set == entry.set)
+            impl_->cached_material_set = VK_NULL_HANDLE;
+        vkFreeDescriptorSets(impl_->device, impl_->materialPool, 1, &entry.set);
+        impl_->materialSets.erase(impl_->materialSets.begin() + static_cast<std::ptrdiff_t>(i));
+    }
     if (tex.view)
         vkDestroyImageView(impl_->device, tex.view, nullptr);
     if (tex.image)
@@ -1766,29 +1833,93 @@ void Device::bindVertexBuffer(BufferHandle handle, std::uint32_t )
 
 void Device::bindTexture(TextureHandle handle, std::uint32_t slot)
 {
-    if (!impl_->frameValid || slot > Impl::kMaterialSlots)
+    if (!impl_->frameValid || slot != 0)
         return;
 
     VkDescriptorSet set = impl_->dummyDescriptorSet;
     if (handle != kInvalidHandle && handle <= impl_->textures.size() && impl_->textures[handle - 1].descriptorSet)
         set = impl_->textures[handle - 1].descriptorSet;
 
-    if (slot != 0)
-    {
-        VkDescriptorSet& cached = impl_->cached_material_sets[slot - 1];
-        if (cached == set)
-            return;
-        vkCmdBindDescriptorSets(impl_->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, impl_->pipelineLayout, 2 + slot, 1, &set,
-                                0, nullptr);
-        cached = set;
-        return;
-    }
-
     if (impl_->cached_descriptor_set == set)
         return;
     vkCmdBindDescriptorSets(impl_->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, impl_->pipelineLayout, 0, 1, &set, 0,
                              nullptr);
     impl_->cached_descriptor_set = set;
+}
+
+void Device::bindMaterialTextures(const TextureHandle textures[4])
+{
+    if (!impl_->frameValid)
+        return;
+
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    bool allEmpty       = true;
+    for (int i = 0; i < 4; ++i)
+        allEmpty = allEmpty && textures[i] == kInvalidHandle;
+    if (allEmpty)
+    {
+        set = impl_->dummyMaterialSet;
+    }
+    else
+    {
+        for (const auto& entry : impl_->materialSets)
+        {
+            bool same = true;
+            for (int i = 0; i < 4; ++i)
+                same = same && entry.textures[i] == textures[i];
+            if (same)
+            {
+                set = entry.set;
+                break;
+            }
+        }
+        if (!set && impl_->materialSets.size() < Impl::kMaxMaterialSets)
+        {
+            VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            alloc.descriptorPool     = impl_->materialPool;
+            alloc.descriptorSetCount = 1;
+            alloc.pSetLayouts        = &impl_->materialSetLayout;
+            VkDescriptorSet created  = VK_NULL_HANDLE;
+            if (vkAllocateDescriptorSets(impl_->device, &alloc, &created) == VK_SUCCESS)
+            {
+                VkDescriptorImageInfo infos[4]{};
+                VkWriteDescriptorSet writes[4]{};
+                for (std::uint32_t i = 0; i < 4; ++i)
+                {
+                    infos[i].sampler     = impl_->defaultSampler;
+                    infos[i].imageView   = impl_->dummyImageView;
+                    infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                    const TextureHandle h = textures[i];
+                    if (h != kInvalidHandle && h <= impl_->textures.size() && impl_->textures[h - 1].view)
+                    {
+                        infos[i].sampler   = impl_->textures[h - 1].sampler;
+                        infos[i].imageView = impl_->textures[h - 1].view;
+                    }
+                    writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    writes[i].dstSet          = created;
+                    writes[i].dstBinding      = i;
+                    writes[i].descriptorCount = 1;
+                    writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    writes[i].pImageInfo      = &infos[i];
+                }
+                vkUpdateDescriptorSets(impl_->device, 4, writes, 0, nullptr);
+                Impl::MaterialSet entry;
+                for (int i = 0; i < 4; ++i)
+                    entry.textures[i] = textures[i];
+                entry.set = created;
+                impl_->materialSets.push_back(entry);
+                set = created;
+            }
+        }
+        if (!set)
+            set = impl_->dummyMaterialSet;
+    }
+
+    if (impl_->cached_material_set == set)
+        return;
+    vkCmdBindDescriptorSets(impl_->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, impl_->pipelineLayout, 3, 1, &set, 0,
+                            nullptr);
+    impl_->cached_material_set = set;
 }
 
 void Device::bindInstanceBuffer(BufferHandle handle)

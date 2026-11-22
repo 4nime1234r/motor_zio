@@ -46,6 +46,7 @@ public:
     bool pixelRead     = false;
     int center[4]      = {};
     int centerInstanced[4] = {};
+    int centerTextured[4]  = {};
     bool fullscreenSet     = false;
     bool fullscreenMode    = false;
     bool restoredMode      = false;
@@ -67,9 +68,10 @@ protected:
 
     void onRender(float) override
     {
-        if (frames != 5 && frames != 6)
+        if (frames != 5 && frames != 6 && frames != 7)
             return;
         const bool second = frames == 6;
+        const bool textured = frames == 7;
         auto& renderer = scene3d::Renderer3D::instance();
         if (!renderer.ensureInitialized())
             return;
@@ -81,6 +83,32 @@ protected:
         auto& device = render::Device::instance();
         device.beginFrame(render::ClearColor{0.f, 0.f, 0.f, 1.f});
         renderer.begin(camera, light, 640, 360);
+        if (textured)
+        {
+            const std::uint8_t flat[4]  = {128, 128, 255, 255};
+            const std::uint8_t white[4] = {255, 255, 255, 255};
+            render::TextureDesc desc{};
+            desc.width       = 1;
+            desc.height      = 1;
+            desc.pixelsRgba8 = flat;
+            const auto normalMap = device.createTexture(desc);
+            desc.pixelsRgba8     = white;
+            const auto roughMap  = device.createTexture(desc);
+            scene3d::MeshStyle style;
+            style.normalTexture            = normalMap;
+            style.metallicRoughnessTexture = roughMap;
+            style.roughness                = 0.8f;
+            renderer.drawMesh(*cube, math::Mat4::translation({0.f, 0.f, 0.f}), style);
+            renderer.end();
+            std::uint8_t px[4] = {};
+            device.readBackPixel(320, 180, px);
+            device.endFrame();
+            for (int i = 0; i < 4; ++i)
+                centerTextured[i] = px[i];
+            device.destroyTexture(normalMap);
+            device.destroyTexture(roughMap);
+            return;
+        }
         renderer.drawMesh(*cube, math::Mat4::translation({0.f, 0.f, 0.f}), renderer::Color::white());
         renderer.drawMesh(*cube, math::Mat4::translation({0.f, 0.f, 50.f}), renderer::Color::white());
         renderer.drawMesh(*cube, math::Mat4::translation({500.f, 0.f, 0.f}), renderer::Color::white());
@@ -159,6 +187,8 @@ int main()
                              std::abs(app.center[1] - app.centerInstanced[1]) <= 2 &&
                              std::abs(app.center[2] - app.centerInstanced[2]) <= 2),
           "el dibujo instanciado coincide con el normal");
+    check(app.drawn == 0 || app.centerTextured[0] + app.centerTextured[1] + app.centerTextured[2] > 120,
+          "un material con mapa de normales y de rugosidad se dibuja");
     check(app.fullscreenSet && app.fullscreenMode && app.fullscreenWidth > 640, "la ventana pasa a pantalla completa");
     check(app.restoredMode && app.restoredWidth == 640, "la ventana vuelve a modo ventana con su tamano");
     check(app.drawn == 0 || app.culled == 2, "el descarte quita los objetos fuera de la camara");

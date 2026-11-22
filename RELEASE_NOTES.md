@@ -1,28 +1,10 @@
 ## Novedades
 
-- Nuevo editor con interfaz propia: panel Escena, Sistema de archivos, visor 3D, Inspector con secciones plegables y Salida.
-- Iconos nuevos en la barra del visor, la escena y los archivos.
-- Mucho más rápido: el dibujado ya no reserva memoria de la tarjeta gráfica en cada lote, y el editor pasó de unos 30 FPS con bajones a más de 120.
-- Carga de modelos glTF y GLB, con color y textura de cada material (modelos con varios materiales incluidos).
-- Animación de huesos en modelos glTF y animación de sprites con hojas de cuadros.
-- El Inspector reproduce las animaciones de los modelos.
-- Sistema de archivos plano: crear, editar y eliminar desde el clic derecho.
-- Nuevo menú Ayuda para buscar actualizaciones, con aviso y notas de cada versión.
-- Scripts de C++ y de C# para los nodos (onStart, onUpdate, onDestroy), que se guardan en la escena. Los de C# se compilan desde Proyecto > Compilar scripts y también se ejecutan con el botón Jugar.
-- Scripts de C++ y de C# muy fáciles: clic derecho en Archivos > Nuevo script, escribe el nombre y listo. El editor compila solo al guardar y antes de Jugar, y recarga los scripts sin reiniciar.
-- Usa cualquier editor de código: el proyecto trae la configuración para VS Code, clangd, Visual Studio y Rider, y Proyecto > Elegir editor de código te deja usar el que quieras.
-- Si falta el compilador de C++ o el SDK de .NET, el editor ofrece instalarlo con un clic.
-- Solo C++ y C#, con un lugar preparado para el lenguaje propio de Zio.
-- Ventana, dibujado, texto, imágenes, audio y mando en Linux (con GLFW, X11 y Wayland).
-- Exportar, importar y jugar juegos con cifrado fuerte: Proyecto > Exportar juego crea un `.exe` y un `.zgame` cifrado (XChaCha20-Poly1305 y Argon2id), con nombre, autor, versión, copyright y firma de autor. Proyecto > Importar juego los vuelve a abrir en el editor si el autor lo permitió.
-- Nuevo reproductor de juegos: pide la contraseña, comprueba la firma y abre el juego (también en Linux con `zio_player`).
-- Los campos de contraseña muestran puntos y no dejan copiar.
-- El editor y los juegos de ejemplo ya no abren una ventana de consola.
-- Luces puntuales y focales con color, intensidad, alcance y sombras: Añadir objeto > Luz puntual / Luz focal, y sus ajustes en el Inspector.
-- El núcleo del motor se compila y se prueba también en Linux.
-- Nueva licencia: uso libre con atribución al autor.
-- Materiales PBR (metálico, rugosidad, mapas de normales, emisivo y oclusión) y glTF más completo: texturas incrustadas, colores de vértice, transparencia, doble cara, cámaras y luces del archivo, y morph targets.
+- Materiales PBR: metálico, rugosidad, mapas de normales, emisivo y oclusión.
+- glTF más completo: texturas incrustadas, colores de vértice, transparencia (opaco, máscara y mezcla), doble cara, cámaras y luces del archivo, y morph targets.
 - Antialiasing MSAA, descarte de objetos fuera de la cámara y dibujo instanciado de mallas repetidas.
-- Pantalla completa y cambio de modo de ventana, y selector de archivos del sistema ("Examinar...") en los diálogos del editor.
+- Pantalla completa y cambio de modo de ventana.
+- Selector de archivos del sistema ("Examinar...") en los diálogos del editor.
 - Scripts de C#: crear y destruir nodos, física 3D, audio, cargar escenas e instanciar prefabs.
 - Prefabs: Añadir objeto > Prefab inserta una escena reutilizable dentro de otra.
+- Nueva licencia: Zio es de uso libre con atribución, pero no se puede vender.

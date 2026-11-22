@@ -63,7 +63,10 @@ bool Application::run(AppConfig config)
                                                              config_.windowWidth, config_.windowHeight, config_.msaaSamples);
         }
         if (!renderReady_)
+        {
+            render::Device::instance().shutdown();
             platform::Window::instance().destroy();
+        }
         if (!renderReady_ && config_.requireRendering)
             return false;
     }

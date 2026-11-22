@@ -391,10 +391,9 @@ struct Renderer3D::Impl
         device.bindPipeline(head.style.doubleSided ? instancedTwoSidedPipeline : instancedPipeline);
         device.bindVertexBuffer(vb, sizeof(Vertex3D));
         device.bindTexture(head.style.texture == render::kInvalidHandle ? whiteTexture : head.style.texture, 0);
-        device.bindTexture(head.style.normalTexture, 1);
-        device.bindTexture(head.style.metallicRoughnessTexture, 2);
-        device.bindTexture(head.style.emissiveTexture, 3);
-        device.bindTexture(head.style.occlusionTexture, 4);
+        const render::TextureHandle material[4] = {head.style.normalTexture, head.style.metallicRoughnessTexture,
+                                                   head.style.emissiveTexture, head.style.occlusionTexture};
+        device.bindMaterialTextures(material);
         device.bindShadowMap();
 
         std::vector<InstanceData> data;
@@ -478,8 +477,8 @@ struct Renderer3D::Impl
         device.updateBuffer(vertexBuffer, pending.data(), static_cast<std::uint32_t>(pending.size() * sizeof(Vertex)));
         device.bindPipeline(currentPipeline);
         device.bindVertexBuffer(vertexBuffer, sizeof(Vertex));
-        for (std::uint32_t slot = 0; slot < 5; ++slot)
-            device.bindTexture(currentMaterial.texture[slot], slot);
+        device.bindTexture(currentMaterial.texture[0]);
+        device.bindMaterialTextures(currentMaterial.texture + 1);
         if (currentPipeline != shadowDepthPipeline)
             device.bindShadowMap();
         device.draw(static_cast<std::uint32_t>(pending.size()));
