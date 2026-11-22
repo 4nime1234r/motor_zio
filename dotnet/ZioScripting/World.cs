@@ -393,6 +393,12 @@ public static unsafe class Audio
         return new Sound(voice);
     }
 
+    public static Sound PlayMusic(string path, float volume = 1f, bool loop = true, Bus bus = default)
+    {
+        uint voice = Native.WithUtf8(path, (p, n) => Native.Api.playStream((byte*)p, n, volume, loop ? 1 : 0, bus.Handle, 1));
+        return new Sound(voice);
+    }
+
     public static void SetListener(Vector3 position, Vector3 forward, Vector3 up)
     {
         float* p = stackalloc float[3] { position.X, position.Y, position.Z };

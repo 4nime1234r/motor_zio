@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,6 +27,19 @@ struct Clip
 };
 
 ZIO_API std::optional<Clip> decodeAudioFile(std::string_view path);
+
+class ZIO_API AudioStream
+{
+public:
+    virtual ~AudioStream() = default;
+
+    static std::unique_ptr<AudioStream> open(std::string_view path);
+
+    virtual std::uint32_t channels() const   = 0;
+    virtual std::uint32_t sampleRate() const = 0;
+    virtual std::size_t read(std::uint8_t* destination, std::size_t maxFrames) = 0;
+    virtual bool rewind()                                                    = 0;
+};
 
 using ClipLoadCallback = std::function<void(std::optional<Clip>)>;
 

@@ -26,6 +26,7 @@ namespace
 constexpr float kMaxFreqRatio = 4.f;
 constexpr UINT32 kBusChannels = 2;
 constexpr UINT32 kRootStage   = 12;
+constexpr std::size_t kStreamBuffers = 4;
 }
 
 class VoiceCallback;
@@ -58,7 +59,14 @@ struct AudioManager::Impl
         float minDistance           = 1.f;
         float maxDistance           = 50.f;
         UINT32 channels             = 1;
+        std::unique_ptr<AudioStream> stream;
+        std::vector<std::uint8_t> slots[kStreamBuffers];
+        std::size_t nextSlot = 0;
+        bool streamLoop      = false;
+        bool streamEnded     = false;
     };
+
+    static constexpr std::size_t kStreamChunkFrames = 16384;
 
     std::unordered_map<VoiceHandle, VoiceEntry> voices;
     VoiceHandle nextHandle = 1;
@@ -109,6 +117,54 @@ struct AudioManager::Impl
             return kInvalidBusHandle;
         buses.push_back(std::move(bus));
         return static_cast<BusHandle>(buses.size());
+    }
+
+    void refillStream(VoiceEntry& entry)
+    {
+        if (!entry.stream || entry.streamEnded || !entry.voice)
+            return;
+        const std::size_t frameBytes = static_cast<std::size_t>(entry.channels) * sizeof(std::int16_t);
+        for (;;)
+        {
+            XAUDIO2_VOICE_STATE state{};
+            entry.voice->GetState(&state, XAUDIO2_VOICE_NOSAMPLESPLAYED);
+            if (state.BuffersQueued >= kStreamBuffers)
+                return;
+
+            std::vector<std::uint8_t>& slot = entry.slots[entry.nextSlot];
+            slot.resize(kStreamChunkFrames * frameBytes);
+            std::size_t frames = entry.stream->read(slot.data(), kStreamChunkFrames);
+            if (frames < kStreamChunkFrames && entry.streamLoop && entry.stream->rewind())
+                frames += entry.stream->read(slot.data() + frames * frameBytes, kStreamChunkFrames - frames);
+
+            XAUDIO2_BUFFER buffer{};
+            bool last = false;
+            if (frames == 0)
+            {
+                slot.assign(frameBytes, 0);
+                frames = 1;
+                last   = true;
+            }
+            else if (frames < kStreamChunkFrames)
+            {
+                last = true;
+            }
+            slot.resize(frames * frameBytes);
+            buffer.AudioBytes = static_cast<UINT32>(slot.size());
+            buffer.pAudioData = slot.data();
+            buffer.Flags      = last ? XAUDIO2_END_OF_STREAM : 0;
+            if (FAILED(entry.voice->SubmitSourceBuffer(&buffer)))
+            {
+                entry.streamEnded = true;
+                return;
+            }
+            entry.nextSlot = (entry.nextSlot + 1) % kStreamBuffers;
+            if (last)
+            {
+                entry.streamEnded = true;
+                return;
+            }
+        }
     }
 
     void applySpatial(VoiceEntry& entry)
@@ -303,6 +359,69 @@ VoiceHandle AudioManager::play(std::shared_ptr<Clip> clip, const PlayParams& par
     return handle;
 }
 
+VoiceHandle AudioManager::playStream(std::string_view path, const PlayParams& params)
+{
+    if (!impl_->engine)
+        return kInvalidVoiceHandle;
+    BusHandle busHandle = params.bus;
+    if (busHandle == kInvalidBusHandle)
+        busHandle = static_cast<BusHandle>(static_cast<std::size_t>(params.category) + 1);
+    Impl::Bus* bus = impl_->find(busHandle);
+    if (!bus)
+        return kInvalidVoiceHandle;
+
+    auto stream = AudioStream::open(path);
+    if (!stream || stream->channels() == 0 || stream->channels() > 8)
+        return kInvalidVoiceHandle;
+
+    WAVEFORMATEX wfx{};
+    wfx.wFormatTag      = WAVE_FORMAT_PCM;
+    wfx.nChannels       = static_cast<WORD>(stream->channels());
+    wfx.nSamplesPerSec  = stream->sampleRate();
+    wfx.wBitsPerSample  = 16;
+    wfx.nBlockAlign     = static_cast<WORD>(stream->channels() * sizeof(std::int16_t));
+    wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign;
+
+    const VoiceHandle handle = impl_->nextHandle++;
+    auto callback              = std::make_unique<VoiceCallback>(impl_.get(), handle);
+    XAUDIO2_SEND_DESCRIPTOR sendDesc{0, bus->voice};
+    XAUDIO2_VOICE_SENDS sends{1, &sendDesc};
+    IXAudio2SourceVoice* voice = nullptr;
+    if (FAILED(impl_->engine->CreateSourceVoice(&voice, &wfx, 0, kMaxFreqRatio, callback.get(), &sends, nullptr)))
+        return kInvalidVoiceHandle;
+
+    Impl::VoiceEntry entry;
+    entry.voice       = voice;
+    entry.target      = bus->voice;
+    entry.spatial     = params.spatial;
+    entry.position    = params.position;
+    entry.minDistance = params.minDistance;
+    entry.maxDistance = params.maxDistance;
+    entry.channels    = stream->channels();
+    entry.streamLoop  = params.loop;
+    entry.stream      = std::move(stream);
+    entry.callback    = std::move(callback);
+    if (entry.spatial)
+        impl_->applySpatial(entry);
+
+    if (FAILED(voice->SetVolume(std::max(params.volume, 0.f))) ||
+        FAILED(voice->SetFrequencyRatio(std::clamp(params.pitch, XAUDIO2_MIN_FREQ_RATIO, kMaxFreqRatio))))
+    {
+        voice->DestroyVoice();
+        return kInvalidVoiceHandle;
+    }
+    impl_->voices.emplace(handle, std::move(entry));
+    Impl::VoiceEntry& stored = impl_->voices.at(handle);
+    impl_->refillStream(stored);
+    if (FAILED(voice->Start(0)))
+    {
+        Impl::destroyEntry(stored);
+        impl_->voices.erase(handle);
+        return kInvalidVoiceHandle;
+    }
+    return handle;
+}
+
 void AudioManager::stop(VoiceHandle voice)
 {
     auto it = impl_->voices.find(voice);
@@ -430,6 +549,10 @@ void AudioManager::clearBusEffects(BusHandle bus)
 
 void AudioManager::update()
 {
+    for (auto& [handle, entry] : impl_->voices)
+        if (entry.stream)
+            impl_->refillStream(entry);
+
     std::vector<VoiceHandle> finished;
     {
         std::lock_guard<std::mutex> lock(impl_->finishedMutex);
@@ -463,7 +586,8 @@ struct AudioManager::Impl
         std::shared_ptr<Clip> clip;
         ma_audio_buffer buffer{};
         ma_sound sound{};
-        bool loop = false;
+        bool loop         = false;
+        bool streamed     = false;
     };
 
     struct Bus
@@ -504,7 +628,8 @@ struct AudioManager::Impl
     static void destroy(Voice& voice)
     {
         ma_sound_uninit(&voice.sound);
-        ma_audio_buffer_uninit(&voice.buffer);
+        if (!voice.streamed)
+            ma_audio_buffer_uninit(&voice.buffer);
     }
 };
 
@@ -595,6 +720,41 @@ VoiceHandle AudioManager::play(std::shared_ptr<Clip> clip, const PlayParams& par
         ma_sound_set_min_distance(&voice->sound, std::max(params.minDistance, 0.01f));
         ma_sound_set_max_distance(&voice->sound, std::max(params.maxDistance, params.minDistance + 0.01f));
         ma_sound_set_attenuation_model(&voice->sound, ma_attenuation_model_inverse);
+    }
+    ma_sound_start(&voice->sound);
+
+    const VoiceHandle handle = impl_->nextHandle++;
+    impl_->voices.emplace(handle, std::move(voice));
+    return handle;
+}
+
+VoiceHandle AudioManager::playStream(std::string_view path, const PlayParams& params)
+{
+    if (!impl_->ready)
+        return kInvalidVoiceHandle;
+    BusHandle busHandle = params.bus;
+    if (busHandle == kInvalidBusHandle)
+        busHandle = static_cast<BusHandle>(static_cast<std::size_t>(params.category) + 1);
+    Impl::Bus* bus = impl_->find(busHandle);
+    if (!bus)
+        return kInvalidVoiceHandle;
+
+    auto voice      = std::make_unique<Impl::Voice>();
+    voice->loop     = params.loop;
+    voice->streamed = true;
+    const std::string file(path);
+    ma_uint32 flags = MA_SOUND_FLAG_STREAM | (params.spatial ? 0 : MA_SOUND_FLAG_NO_SPATIALIZATION);
+    if (ma_sound_init_from_file(&impl_->engine, file.c_str(), flags, bus->group.get(), nullptr, &voice->sound) !=
+        MA_SUCCESS)
+        return kInvalidVoiceHandle;
+    ma_sound_set_volume(&voice->sound, std::max(params.volume, 0.f));
+    ma_sound_set_pitch(&voice->sound, std::max(params.pitch, 0.01f));
+    ma_sound_set_looping(&voice->sound, params.loop ? MA_TRUE : MA_FALSE);
+    if (params.spatial)
+    {
+        ma_sound_set_position(&voice->sound, params.position.x, params.position.y, params.position.z);
+        ma_sound_set_min_distance(&voice->sound, std::max(params.minDistance, 0.01f));
+        ma_sound_set_max_distance(&voice->sound, std::max(params.maxDistance, params.minDistance + 0.01f));
     }
     ma_sound_start(&voice->sound);
 

@@ -107,6 +107,7 @@ struct NativeApi
     void(__cdecl* setBusVolume)(unsigned, float);
     int(__cdecl* setBusEffect)(unsigned, int, float);
     void(__cdecl* clearBusEffects)(unsigned);
+    unsigned(__cdecl* playStream)(const char*, int, float, int, unsigned, int);
 };
 
 scene3d::Node3D* asNode(void* node)
@@ -525,6 +526,19 @@ int __cdecl apiSetBusEffect(unsigned bus, int effect, float value)
 void __cdecl apiClearBusEffects(unsigned bus)
 {
     audio::AudioManager::instance().clearBusEffects(bus);
+}
+
+unsigned __cdecl apiPlayStream(const char* path, int length, float volume, int loop, unsigned bus, int category)
+{
+    auto& manager = audio::AudioManager::instance();
+    if (!manager.isInitialized())
+        return 0;
+    audio::PlayParams params;
+    params.volume   = volume;
+    params.loop     = loop != 0;
+    params.bus      = bus;
+    params.category = category == 1 ? audio::Category::Music : audio::Category::Sfx;
+    return manager.playStream(text(path, length), params);
 }
 
 void __cdecl apiStopSound(unsigned voice)
@@ -959,6 +973,7 @@ bool DotNetRuntime::start(const fs::path& workDir, std::string* error)
     impl_->api.setBusVolume      = apiSetBusVolume;
     impl_->api.setBusEffect      = apiSetBusEffect;
     impl_->api.clearBusEffects   = apiClearBusEffects;
+    impl_->api.playStream        = apiPlayStream;
     impl_->api.createJoint       = apiCreateJoint;
     impl_->api.destroyJoint      = apiDestroyJoint;
     impl_->api.triggerEventCount = apiTriggerEventCount;

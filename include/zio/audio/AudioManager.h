@@ -27,6 +27,8 @@ public:
 
     VoiceHandle play(std::shared_ptr<Clip> clip, const PlayParams& params = {});
 
+    VoiceHandle playStream(std::string_view path, const PlayParams& params = {});
+
     void stop(VoiceHandle voice);
     void setVolume(VoiceHandle voice, float volume);
     void setPitch(VoiceHandle voice, float pitch);

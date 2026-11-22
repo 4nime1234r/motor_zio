@@ -64,6 +64,7 @@ internal unsafe struct NativeApi
     public delegate* unmanaged<uint, float, void> setBusVolume;
     public delegate* unmanaged<uint, int, float, int> setBusEffect;
     public delegate* unmanaged<uint, void> clearBusEffects;
+    public delegate* unmanaged<byte*, int, float, int, uint, int, uint> playStream;
 }
 
 internal static class Native
