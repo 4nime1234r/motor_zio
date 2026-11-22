@@ -10,12 +10,19 @@
 #include <vector>
 
 #include "zio/render/Device.h"
+#include "zio/renderer/Texture.h"
 
 #include "mesh3d_frag.spv.h"
 #include "mesh3d_inst_vert.spv.h"
 #include "mesh3d_vert.spv.h"
 #include "shadow_frag.spv.h"
 #include "shadow_inst_vert.spv.h"
+#include "bright_frag.spv.h"
+#include "blur_frag.spv.h"
+#include "composite_frag.spv.h"
+#include "post_vert.spv.h"
+#include "sky_frag.spv.h"
+#include "sky_vert.spv.h"
 
 namespace zio::scene3d
 {
@@ -64,6 +71,14 @@ struct SceneBlock
     float lightDir[kMaxLights][4];
     float lightMisc[kMaxLights][4];
     float viewProj[16];
+    float camRight[4];
+    float camUp[4];
+    float camForward[4];
+    float skyZenith[4];
+    float skyHorizon[4];
+    float skyGround[4];
+    float fogColor[4];
+    float fogParams[4];
 };
 
 struct InstanceData
@@ -214,6 +229,104 @@ struct Renderer3D::Impl
     render::PipelineHandle instancedPipeline          = render::kInvalidHandle;
     render::PipelineHandle instancedTwoSidedPipeline  = render::kInvalidHandle;
     render::PipelineHandle shadowInstancedPipeline    = render::kInvalidHandle;
+    render::PipelineHandle skyPipeline                = render::kInvalidHandle;
+    render::PipelineHandle brightPipeline             = render::kInvalidHandle;
+    render::PipelineHandle blurPipeline               = render::kInvalidHandle;
+    render::PipelineHandle compositePipeline          = render::kInvalidHandle;
+    bool postReady                                    = false;
+    render::RenderTargetHandle sceneTarget            = render::kInvalidHandle;
+    render::RenderTargetHandle bloomA                 = render::kInvalidHandle;
+    render::RenderTargetHandle bloomB                 = render::kInvalidHandle;
+    std::uint32_t targetWidth                         = 0;
+    std::uint32_t targetHeight                        = 0;
+
+    bool ensurePostTargets(std::uint32_t w, std::uint32_t h)
+    {
+        auto& device = render::Device::instance();
+        if (sceneTarget != render::kInvalidHandle && targetWidth == w && targetHeight == h)
+            return true;
+        for (render::RenderTargetHandle* handle : {&sceneTarget, &bloomA, &bloomB})
+        {
+            if (*handle != render::kInvalidHandle)
+                device.destroyRenderTarget(*handle);
+            *handle = render::kInvalidHandle;
+        }
+        render::RenderTargetDesc scene{w, h, true};
+        render::RenderTargetDesc half{std::max(1u, w / 2), std::max(1u, h / 2), false};
+        sceneTarget = device.createRenderTarget(scene);
+        bloomA      = device.createRenderTarget(half);
+        bloomB      = device.createRenderTarget(half);
+        targetWidth  = w;
+        targetHeight = h;
+        if (sceneTarget == render::kInvalidHandle || bloomA == render::kInvalidHandle || bloomB == render::kInvalidHandle)
+        {
+            targetWidth = 0;
+            return false;
+        }
+        return true;
+    }
+
+    void pushPost(render::Device& device, float threshold, float intensity, float bloomOn, float texelX, float texelY)
+    {
+        const Environment& e = environment;
+        const float data[12] = {threshold, intensity, e.exposure, e.contrast,
+                                e.saturation, bloomOn, texelX, texelY,
+                                e.tint.r, e.tint.g, e.tint.b, 1.f};
+        device.setPushConstants(data, sizeof(data));
+    }
+
+    void runPost(render::Device& device)
+    {
+        const Environment& e = environment;
+        device.endRenderTarget(false);
+        const render::TextureHandle scene = device.renderTargetTexture(sceneTarget);
+        if (e.bloom)
+        {
+            const float halfW = static_cast<float>(std::max(1u, targetWidth / 2));
+            const float halfH = static_cast<float>(std::max(1u, targetHeight / 2));
+            if (device.beginRenderTarget(bloomA, render::ClearColor{0.f, 0.f, 0.f, 1.f}))
+            {
+                device.bindPipeline(brightPipeline);
+                device.bindTexture(scene);
+                pushPost(device, e.bloomThreshold, e.bloomIntensity, 1.f, 0.f, 0.f);
+                device.draw(3);
+                device.endRenderTarget(false);
+            }
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                if (device.beginRenderTarget(bloomB, render::ClearColor{0.f, 0.f, 0.f, 1.f}))
+                {
+                    device.bindPipeline(blurPipeline);
+                    device.bindTexture(device.renderTargetTexture(bloomA));
+                    pushPost(device, e.bloomThreshold, e.bloomIntensity, 1.f, 1.f / halfW, 0.f);
+                    device.draw(3);
+                    device.endRenderTarget(false);
+                }
+                if (device.beginRenderTarget(bloomA, render::ClearColor{0.f, 0.f, 0.f, 1.f}))
+                {
+                    device.bindPipeline(blurPipeline);
+                    device.bindTexture(device.renderTargetTexture(bloomB));
+                    pushPost(device, e.bloomThreshold, e.bloomIntensity, 1.f, 0.f, 1.f / halfH);
+                    device.draw(3);
+                    device.endRenderTarget(false);
+                }
+            }
+        }
+        device.resumeMainPass();
+        device.setViewport(viewportX, viewportY, viewportWidth, viewportHeight);
+        device.bindPipeline(compositePipeline);
+        device.bindTexture(scene);
+        const render::TextureHandle bloomTexture[4] = {e.bloom ? device.renderTargetTexture(bloomA) : render::kInvalidHandle,
+                                                       render::kInvalidHandle, render::kInvalidHandle,
+                                                       render::kInvalidHandle};
+        device.bindMaterialTextures(bloomTexture);
+        pushPost(device, e.bloomThreshold, e.bloomIntensity, e.bloom ? 1.f : 0.f, 0.f, 0.f);
+        device.draw(3);
+        currentPipeline = render::kInvalidHandle;
+    }
+    Environment environment;
+    std::shared_ptr<renderer::Texture> panoramaTexture;
+    std::string panoramaLoaded;
     render::BufferHandle instanceBuffer               = render::kInvalidHandle;
 
     struct Line
@@ -487,6 +600,32 @@ struct Renderer3D::Impl
         instancedPipeline         = makeInstancedPipeline(true);
         instancedTwoSidedPipeline = makeInstancedPipeline(false);
         shadowInstancedPipeline   = makeInstancedPipeline(false, true);
+        {
+            render::PipelineDesc sky{};
+            sky.vertexShaderSpirv = zio_sky_vert_spirv;
+            sky.pixelShaderSpirv  = zio_sky_frag_spirv;
+            sky.depthTest         = false;
+            sky.depthWrite        = false;
+            sky.cullBack          = false;
+            skyPipeline           = device.createPipeline(sky);
+
+            render::PipelineDesc post{};
+            post.vertexShaderSpirv = zio_post_vert_spirv;
+            post.pixelShaderSpirv  = zio_bright_frag_spirv;
+            post.postPass          = true;
+            brightPipeline         = device.createPipeline(post);
+            post.pixelShaderSpirv  = zio_blur_frag_spirv;
+            blurPipeline           = device.createPipeline(post);
+
+            render::PipelineDesc composite{};
+            composite.vertexShaderSpirv = zio_post_vert_spirv;
+            composite.pixelShaderSpirv  = zio_composite_frag_spirv;
+            composite.depthTest         = false;
+            composite.depthWrite        = false;
+            compositePipeline           = device.createPipeline(composite);
+            postReady = brightPipeline != render::kInvalidHandle && blurPipeline != render::kInvalidHandle &&
+                        compositePipeline != render::kInvalidHandle;
+        }
         render::BufferDesc ib{};
         ib.type      = render::BufferType::Vertex;
         ib.usage     = render::BufferUsage::Dynamic;
@@ -855,6 +994,11 @@ void Renderer3D::begin(const Camera& camera, const Light& light, std::uint32_t v
     impl_->pending.clear();
 }
 
+void Renderer3D::setEnvironment(const Environment& environment)
+{
+    impl_->environment = environment;
+}
+
 void Renderer3D::addLight(const LocalLight& light)
 {
     if (!impl_->initialized || !(light.range > 0.f) || !(light.intensity > 0.f))
@@ -1177,9 +1321,65 @@ void Renderer3D::end()
     for (int r = 0; r < 4; ++r)
         for (int c = 0; c < 4; ++c)
             block.viewProj[c * 4 + r] = s.viewProj.m[r][c];
+    {
+        const math::Vec3 forward = (s.camera.target - s.camera.position).normalized();
+        const math::Vec3 right   = forward.cross(s.camera.up).normalized();
+        const math::Vec3 up      = right.cross(forward);
+        const float tanHalf      = std::tan(s.camera.fovYDegrees * 0.5f * 3.14159265f / 180.f);
+        const Environment& env   = s.environment;
+        const math::Vec3 rows[3] = {right, up, forward};
+        float* targets[3]        = {block.camRight, block.camUp, block.camForward};
+        for (int i = 0; i < 3; ++i)
+        {
+            targets[i][0] = rows[i].x;
+            targets[i][1] = rows[i].y;
+            targets[i][2] = rows[i].z;
+        }
+        block.camRight[3] = tanHalf * s.aspect;
+        block.camUp[3]    = tanHalf;
+        const renderer::Color colors[3] = {env.zenith, env.horizon, env.ground};
+        float* colorTargets[3]          = {block.skyZenith, block.skyHorizon, block.skyGround};
+        for (int i = 0; i < 3; ++i)
+        {
+            colorTargets[i][0] = colors[i].r;
+            colorTargets[i][1] = colors[i].g;
+            colorTargets[i][2] = colors[i].b;
+            colorTargets[i][3] = 1.f;
+        }
+        block.fogColor[0] = env.fogColor.r;
+        block.fogColor[1] = env.fogColor.g;
+        block.fogColor[2] = env.fogColor.b;
+        block.fogColor[3] = 1.f;
+        block.fogParams[0] = env.fog == FogMode::None ? 0.f : (env.fog == FogMode::Linear ? 1.f : 2.f);
+        block.fogParams[1] = env.fog == FogMode::Exponential ? env.fogDensity : env.fogStart;
+        block.fogParams[2] = env.fogEnd;
+        block.fogParams[3] = env.sky == SkyMode::Panorama && s.panoramaTexture ? 2.f : (env.sky == SkyMode::None ? 0.f : 1.f);
+    }
     device.bindUniformBlock(&block, sizeof(block));
 
-    device.setViewport(s.viewportX, s.viewportY, s.viewportWidth, s.viewportHeight);
+    const bool post = s.environment.needsPostProcess() && s.postReady &&
+                      s.ensurePostTargets(s.viewportWidth, s.viewportHeight) &&
+                      device.beginRenderTarget(s.sceneTarget, render::ClearColor{0.f, 0.f, 0.f, 0.f});
+    if (post)
+        device.setViewport(0, 0, s.viewportWidth, s.viewportHeight);
+    else
+        device.setViewport(s.viewportX, s.viewportY, s.viewportWidth, s.viewportHeight);
+
+    if (s.environment.sky != SkyMode::None && s.skyPipeline != render::kInvalidHandle)
+    {
+        if (s.environment.sky == SkyMode::Panorama && s.panoramaLoaded != s.environment.panorama)
+        {
+            s.panoramaLoaded  = s.environment.panorama;
+            s.panoramaTexture = s.environment.panorama.empty()
+                                    ? nullptr
+                                    : renderer::TextureCache::instance().loadSync(
+                                          s.environment.panorama, render::TextureFilter::Linear, render::TextureWrap::Repeat);
+        }
+        device.bindPipeline(s.skyPipeline);
+        device.bindTexture(s.panoramaTexture ? s.panoramaTexture->handle : s.whiteTexture);
+        device.draw(3);
+        s.currentPipeline = render::kInvalidHandle;
+    }
 
     s.frustum.build(s.viewProj);
     s.culled    = 0;
@@ -1225,7 +1425,9 @@ void Renderer3D::end()
     s.emitLines(LineMode::Overlay);
     s.flush();
 
-    render::Device::instance().resetViewport();
+    if (post)
+        s.runPost(device);
+    device.resetViewport();
 
     s.commands.clear();
     s.lines.clear();

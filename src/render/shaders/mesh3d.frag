@@ -21,6 +21,15 @@ layout(std140, set = 2, binding = 0) uniform Scene
     vec4 lightColor[kMaxLights];
     vec4 lightDir[kMaxLights];
     vec4 lightMisc[kMaxLights];
+    mat4 viewProj;
+    vec4 camRight;
+    vec4 camUp;
+    vec4 camForward;
+    vec4 skyZenith;
+    vec4 skyHorizon;
+    vec4 skyGround;
+    vec4 fogColor;
+    vec4 fogParams;
 };
 
 layout(location = 0) in vec4 inColor;
@@ -228,5 +237,12 @@ void main()
     vec3 fresnelR  = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - nv, 5.0);
     vec3 specular  = dirSpec * (1.0 - ambient) + localSpec + fresnelR * envLight * (1.0 - 0.6 * roughness);
     vec3 color    = (diffuseColor * lighting + specular) * occlusion + emissive;
+    if (fogParams.x > 0.5)
+    {
+        float distanceToCamera = length(camPos.xyz - inWorld);
+        float amount = fogParams.x < 1.5 ? clamp((distanceToCamera - fogParams.y) / max(fogParams.z - fogParams.y, 0.001), 0.0, 1.0)
+                                         : 1.0 - exp(-fogParams.y * distanceToCamera);
+        color = mix(color, fogColor.rgb, clamp(amount, 0.0, 1.0));
+    }
     outColor      = vec4(color, base.a);
 }

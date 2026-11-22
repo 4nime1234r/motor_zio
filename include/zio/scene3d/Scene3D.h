@@ -23,6 +23,9 @@ public:
     Camera& camera() { return camera_; }
     const Camera& camera() const { return camera_; }
 
+    Environment& environment() { return environment_; }
+    const Environment& environment() const { return environment_; }
+
     Light& light() { return light_; }
     const Light& light() const { return light_; }
 
@@ -36,6 +39,7 @@ private:
     Node3D root_;
     Camera camera_;
     Light light_;
+    Environment environment_;
 };
 
 }

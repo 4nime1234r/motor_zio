@@ -45,11 +45,24 @@ int main()
     spot->setInnerAngle(10.f);
     spot->setOuterAngle(40.f);
 
+    scene.environment().sky      = SkyMode::Panorama;
+    scene.environment().panorama = "assets/cielo.png";
+    scene.environment().fog      = FogMode::Exponential;
+    scene.environment().fogDensity = 0.07f;
+    scene.environment().bloom    = true;
+    scene.environment().exposure = 1.4f;
+    scene.environment().tint     = {1.f, 0.9f, 0.8f, 1.f};
     const std::string text = serializeScene3D(scene);
 
     Scene3D loaded;
     std::string error;
     check(deserializeScene3D(loaded, text, &error), "la escena con luces se carga");
+    check(loaded.environment().sky == SkyMode::Panorama && loaded.environment().panorama == "assets/cielo.png",
+          "el cielo de la escena se conserva");
+    check(loaded.environment().fog == FogMode::Exponential && near(loaded.environment().fogDensity, 0.07f),
+          "la niebla de la escena se conserva");
+    check(loaded.environment().bloom && near(loaded.environment().exposure, 1.4f) && near(loaded.environment().tint.g, 0.9f),
+          "el postproceso de la escena se conserva");
     check(loaded.root().children().size() == 2, "hay dos luces");
     if (loaded.root().children().size() == 2)
     {

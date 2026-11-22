@@ -48,6 +48,10 @@ public:
     int centerInstanced[4] = {};
     int centerTextured[4]  = {};
     int centerShadowed[4]  = {};
+    int skyPixel[4]        = {};
+    int bloomPixel[4]      = {};
+    int exposurePixel[4]   = {};
+    int bloomEdge          = 0;
     bool fullscreenSet     = false;
     bool fullscreenMode    = false;
     bool restoredMode      = false;
@@ -69,11 +73,13 @@ protected:
 
     void onRender(float) override
     {
-        if (frames != 4 && frames != 5 && frames != 6 && frames != 7)
+        if (frames != 1 && frames != 2 && frames != 3 && frames != 4 && frames != 5 && frames != 6 && frames != 7)
             return;
         const bool second = frames == 6;
         const bool textured = frames == 7;
         const bool shadowed = frames == 4;
+        const bool skyFrame = frames == 3;
+        const bool postFrame = frames == 1 || frames == 2;
         auto& renderer = scene3d::Renderer3D::instance();
         if (!renderer.ensureInitialized())
             return;
@@ -86,6 +92,47 @@ protected:
         auto& device = render::Device::instance();
         device.beginFrame(render::ClearColor{0.f, 0.f, 0.f, 1.f});
         renderer.begin(camera, light, 640, 360);
+        if (postFrame)
+        {
+            scene3d::Environment env;
+            env.bloom          = frames == 1;
+            env.bloomThreshold = 0.2f;
+            env.bloomIntensity = 3.f;
+            env.exposure       = frames == 2 ? 0.5f : 1.f;
+            renderer.setEnvironment(env);
+            renderer.begin(camera, light, 640, 360);
+            renderer.drawMesh(*cube, math::Mat4::translation({0.f, 0.f, 0.f}), renderer::Color::white());
+            renderer.end();
+            std::uint8_t px[4] = {};
+            device.readBackPixel(320, 180, px);
+            std::uint8_t edge[4] = {};
+            device.readBackPixel(356, 180, edge);
+            device.endFrame();
+            for (int i = 0; i < 4; ++i)
+                (frames == 1 ? bloomPixel : exposurePixel)[i] = px[i];
+            if (frames == 1)
+                bloomEdge = edge[0] + edge[1] + edge[2];
+            renderer.setEnvironment(scene3d::Environment{});
+            return;
+        }
+        if (skyFrame)
+        {
+            scene3d::Environment sky;
+            sky.sky     = scene3d::SkyMode::Gradient;
+            sky.zenith  = {1.f, 0.f, 0.f, 1.f};
+            sky.horizon = {1.f, 0.f, 0.f, 1.f};
+            sky.ground  = {1.f, 0.f, 0.f, 1.f};
+            renderer.setEnvironment(sky);
+            renderer.begin(camera, light, 640, 360);
+            renderer.end();
+            std::uint8_t px[4] = {};
+            device.readBackPixel(20, 20, px);
+            device.endFrame();
+            for (int i = 0; i < 4; ++i)
+                skyPixel[i] = px[i];
+            renderer.setEnvironment(scene3d::Environment{});
+            return;
+        }
         if (shadowed)
         {
             renderer.drawMesh(*cube, math::Mat4::translation({0.f, 0.f, 0.f}), renderer::Color::white());
@@ -209,6 +256,12 @@ int main()
           "un material con mapa de normales y de rugosidad se dibuja");
     check(app.drawn == 0 || app.centerShadowed[0] + app.centerShadowed[1] + app.centerShadowed[2] > 120,
           "las sombras de mallas repetidas se dibujan sin romper la escena");
+    check(app.drawn == 0 || (app.skyPixel[0] > 200 && app.skyPixel[1] < 40 && app.skyPixel[2] < 40),
+          "el cielo degradado pinta el fondo");
+    check(app.drawn == 0 || (app.exposurePixel[0] > 40 && app.exposurePixel[0] < 120),
+          "el postproceso baja la exposicion de la imagen");
+    check(app.drawn == 0 || app.bloomPixel[0] > 120, "el postproceso con bloom dibuja la escena");
+    check(app.drawn == 0 || app.bloomEdge > 0, "el bloom hace brillar el borde de los objetos claros");
     check(app.fullscreenSet && app.fullscreenMode && app.fullscreenWidth > 640, "la ventana pasa a pantalla completa");
     check(app.restoredMode && app.restoredWidth == 640, "la ventana vuelve a modo ventana con su tamano");
     check(app.drawn == 0 || app.culled == 2, "el descarte quita los objetos fuera de la camara");

@@ -26,6 +26,7 @@ Zio es de uso libre, pero no se puede vender: puedes usarlo y modificarlo gratis
 - Prefabs: escenas reutilizables dentro de otras.
 - Animación de huesos: varios esqueletos por modelo, hasta 8 huesos por vértice, interpolación lineal, por pasos y de curva cúbica, y transición suave entre animaciones. La animación en curso se guarda en la escena.
 - Iluminación por píxel con luz direccional, luces puntuales y luces focales (hasta 8 por escena, con color, intensidad y alcance) y sombras reales con mapa de sombras suavizado en las tres.
+- Entorno de la escena: cielo degradado o panorama, niebla lineal o exponencial y postproceso (bloom, exposición, contraste, saturación y tinte), guardado en la escena.
 - Materiales transparentes ordenados correctamente.
 - Líneas con grosor para depuración.
 

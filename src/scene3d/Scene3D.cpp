@@ -32,6 +32,7 @@ void Scene3D::update(float dt)
 void Scene3D::draw(std::uint32_t viewportWidth, std::uint32_t viewportHeight)
 {
     auto& renderer = Renderer3D::instance();
+    renderer.setEnvironment(environment_);
     renderer.begin(camera_, light_, viewportWidth, viewportHeight);
     root_.visit(renderer);
     renderer.end();

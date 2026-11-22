@@ -80,7 +80,33 @@ struct Device::Impl
     VkFramebuffer shadowFramebuffer       = VK_NULL_HANDLE;
     VkDescriptorSet shadowDescriptorSet   = VK_NULL_HANDLE;
     bool inShadowPass                     = false;
+    bool mainActive                       = false;
     bool shadowSetBound                   = false;
+
+    struct Target
+    {
+        bool alive          = false;
+        bool scene          = false;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        VkImage msaaImage   = VK_NULL_HANDLE;
+        VkDeviceMemory msaaMemory = VK_NULL_HANDLE;
+        VkImageView msaaView = VK_NULL_HANDLE;
+        VkImage depthImage  = VK_NULL_HANDLE;
+        VkDeviceMemory depthMemory = VK_NULL_HANDLE;
+        VkImageView depthView = VK_NULL_HANDLE;
+        VkImage colorImage  = VK_NULL_HANDLE;
+        VkDeviceMemory colorMemory = VK_NULL_HANDLE;
+        VkImageView colorView = VK_NULL_HANDLE;
+        VkFramebuffer framebuffer = VK_NULL_HANDLE;
+        TextureHandle texture = 0;
+    };
+    std::vector<Target> targets;
+    VkRenderPass renderPassTarget = VK_NULL_HANDLE;
+    VkRenderPass renderPassPost   = VK_NULL_HANDLE;
+    bool inTarget                 = false;
+    std::uint32_t currentWidth    = 0;
+    std::uint32_t currentHeight   = 0;
 
     VkCommandPool commandPool  = VK_NULL_HANDLE;
     VkCommandBuffer cmd        = VK_NULL_HANDLE;
@@ -568,7 +594,187 @@ struct Device::Impl
         if (vkCreateRenderPass(device, &rpInfo, nullptr, &renderPassLoad) != VK_SUCCESS)
             return false;
 
+        return createTargetPasses();
+    }
+
+    bool createTargetPasses()
+    {
+        constexpr VkPipelineStageFlags kStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        VkSubpassDependency dependencies[2]{};
+        dependencies[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+        dependencies[0].dstSubpass    = 0;
+        dependencies[0].srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | kStages;
+        dependencies[0].dstStageMask  = kStages;
+        dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        dependencies[1].srcSubpass    = 0;
+        dependencies[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
+        dependencies[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependencies[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        {
+            VkAttachmentDescription attachments[3]{};
+            attachments[0].format         = swapchainFormat;
+            attachments[0].samples        = sampleCount;
+            attachments[0].loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            attachments[0].storeOp        = multisampled() ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
+            attachments[0].stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            attachments[0].initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+            attachments[0].finalLayout    = multisampled() ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                                                           : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            attachments[1].format         = depthFormat;
+            attachments[1].samples        = sampleCount;
+            attachments[1].loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            attachments[1].storeOp        = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            attachments[1].stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            attachments[1].initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+            attachments[1].finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            attachments[2].format         = swapchainFormat;
+            attachments[2].samples        = VK_SAMPLE_COUNT_1_BIT;
+            attachments[2].loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            attachments[2].storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+            attachments[2].stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            attachments[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            attachments[2].initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+            attachments[2].finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            VkAttachmentReference depthRef{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+            VkAttachmentReference resolveRef{2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            VkSubpassDescription subpass{};
+            subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpass.colorAttachmentCount    = 1;
+            subpass.pColorAttachments       = &colorRef;
+            subpass.pDepthStencilAttachment = &depthRef;
+            if (multisampled())
+                subpass.pResolveAttachments = &resolveRef;
+
+            VkRenderPassCreateInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+            info.attachmentCount = multisampled() ? 3 : 2;
+            info.pAttachments    = attachments;
+            VkSubpassDependency mainLike{};
+            mainLike.srcSubpass    = VK_SUBPASS_EXTERNAL;
+            mainLike.dstSubpass    = 0;
+            mainLike.srcStageMask  = kStages;
+            mainLike.dstStageMask  = kStages;
+            mainLike.srcAccessMask = 0;
+            mainLike.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            info.subpassCount    = 1;
+            info.pSubpasses      = &subpass;
+            info.dependencyCount = 1;
+            info.pDependencies   = &mainLike;
+            if (vkCreateRenderPass(device, &info, nullptr, &renderPassTarget) != VK_SUCCESS)
+                return false;
+        }
+        {
+            VkAttachmentDescription color{};
+            color.format         = swapchainFormat;
+            color.samples        = VK_SAMPLE_COUNT_1_BIT;
+            color.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            color.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+            color.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            color.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+            color.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            VkSubpassDescription subpass{};
+            subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpass.colorAttachmentCount = 1;
+            subpass.pColorAttachments    = &colorRef;
+            VkRenderPassCreateInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+            info.attachmentCount = 1;
+            info.pAttachments    = &color;
+            info.subpassCount    = 1;
+            info.pSubpasses      = &subpass;
+            info.dependencyCount = 2;
+            info.pDependencies   = dependencies;
+            if (vkCreateRenderPass(device, &info, nullptr, &renderPassPost) != VK_SUCCESS)
+                return false;
+        }
         return true;
+    }
+
+    bool makeImage(std::uint32_t w, std::uint32_t h, VkFormat format, VkSampleCountFlagBits samples,
+                   VkImageUsageFlags usage, VkImageAspectFlags aspect, VkImage& image, VkDeviceMemory& memory,
+                   VkImageView& view)
+    {
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType     = VK_IMAGE_TYPE_2D;
+        info.format        = format;
+        info.extent        = {w, h, 1};
+        info.mipLevels     = 1;
+        info.arrayLayers   = 1;
+        info.samples       = samples;
+        info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+        info.usage         = usage;
+        info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (vkCreateImage(device, &info, nullptr, &image) != VK_SUCCESS)
+            return false;
+        VkMemoryRequirements req{};
+        vkGetImageMemoryRequirements(device, image, &req);
+        std::uint32_t type = 0;
+        if (!findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, type))
+            return false;
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize  = req.size;
+        alloc.memoryTypeIndex = type;
+        if (vkAllocateMemory(device, &alloc, nullptr, &memory) != VK_SUCCESS)
+            return false;
+        vkBindImageMemory(device, image, memory, 0);
+        VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        viewInfo.image                       = image;
+        viewInfo.viewType                    = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format                      = format;
+        viewInfo.subresourceRange.aspectMask = aspect;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.layerCount = 1;
+        return vkCreateImageView(device, &viewInfo, nullptr, &view) == VK_SUCCESS;
+    }
+
+    void releaseTarget(Target& target)
+    {
+        if (target.framebuffer)
+            vkDestroyFramebuffer(device, target.framebuffer, nullptr);
+        for (VkImageView view : {target.msaaView, target.depthView, target.colorView})
+            if (view)
+                vkDestroyImageView(device, view, nullptr);
+        for (VkImage image : {target.msaaImage, target.depthImage, target.colorImage})
+            if (image)
+                vkDestroyImage(device, image, nullptr);
+        for (VkDeviceMemory memory : {target.msaaMemory, target.depthMemory, target.colorMemory})
+            if (memory)
+                vkFreeMemory(device, memory, nullptr);
+        target = Target{};
+    }
+
+    void resumeAfterInterrupt()
+    {
+        VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image               = swapchainImages[currentImageIndex];
+        barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barrier.oldLayout           = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barrier.newLayout           = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        barrier.srcAccessMask       = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.dstAccessMask       = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+        VkMemoryBarrier memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        memory.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        memory.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        constexpr VkPipelineStageFlags kStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        vkCmdPipelineBarrier(cmd, kStages, kStages, 0, 1, &memory, 0, nullptr, 1, &barrier);
+        recordMainPass(renderPassLoad, ClearColor{});
     }
 
     bool createDepthResources()
@@ -742,7 +948,7 @@ struct Device::Impl
 
         VkDescriptorSetLayout setLayouts[kLayoutSets] = {descriptorSetLayout, descriptorSetLayout, uniformSetLayout,
                                                          materialSetLayout};
-        VkPushConstantRange pushRange{VK_SHADER_STAGE_VERTEX_BIT, 0, 64};
+        VkPushConstantRange pushRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 64};
         VkPipelineLayoutCreateInfo plInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         plInfo.pushConstantRangeCount = 1;
         plInfo.pPushConstantRanges    = &pushRange;
@@ -764,6 +970,7 @@ struct Device::Impl
             return false;
 
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        poolInfo.flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
         poolInfo.maxSets       = kMaxDescriptorSets + 1;
         poolInfo.poolSizeCount = 2;
         poolInfo.pPoolSizes    = poolSizes;
@@ -1164,6 +1371,7 @@ struct Device::Impl
 
     void recordMainPass(VkRenderPass rp, const ClearColor& clear)
     {
+        mainActive = true;
         VkClearValue clearValues[3]{};
         clearValues[0].color        = {{clear.r, clear.g, clear.b, clear.a}};
         clearValues[1].depthStencil = {1.f, 0};
@@ -1231,7 +1439,7 @@ void Device::shutdown()
 
     for (auto& tex : impl_->textures)
     {
-        if (tex.view)
+        if (tex.view && tex.image)
             vkDestroyImageView(impl_->device, tex.view, nullptr);
         if (tex.image)
             vkDestroyImage(impl_->device, tex.image, nullptr);
@@ -1294,6 +1502,14 @@ void Device::shutdown()
     if (impl_->commandPool)
         vkDestroyCommandPool(impl_->device, impl_->commandPool, nullptr);
 
+    for (auto& target : impl_->targets)
+        if (target.alive)
+            impl_->releaseTarget(target);
+    impl_->targets.clear();
+    if (impl_->renderPassTarget)
+        vkDestroyRenderPass(impl_->device, impl_->renderPassTarget, nullptr);
+    if (impl_->renderPassPost)
+        vkDestroyRenderPass(impl_->device, impl_->renderPassPost, nullptr);
     impl_->destroySwapchainResources();
     impl_->destroyShadowResources();
     if (impl_->renderPassLoad)
@@ -1521,7 +1737,7 @@ PipelineHandle Device::createPipeline(const PipelineDesc& desc)
     rasterizer.lineWidth   = 1.f;
 
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-    multisample.rasterizationSamples = desc.shadowPass ? VK_SAMPLE_COUNT_1_BIT : impl_->sampleCount;
+    multisample.rasterizationSamples = (desc.shadowPass || desc.postPass) ? VK_SAMPLE_COUNT_1_BIT : impl_->sampleCount;
 
     VkPipelineColorBlendAttachmentState blendAttachment{};
     blendAttachment.blendEnable         = VK_TRUE;
@@ -1577,7 +1793,10 @@ PipelineHandle Device::createPipeline(const PipelineDesc& desc)
     pipelineInfo.pColorBlendState    = &colorBlend;
     pipelineInfo.pDynamicState       = &dynamicState;
     pipelineInfo.layout              = impl_->pipelineLayout;
-    pipelineInfo.renderPass          = desc.shadowPass ? impl_->renderPassShadow : impl_->renderPassClear;
+    pipelineInfo.renderPass          = desc.postPass ? impl_->renderPassPost
+                                                       : (desc.shadowPass ? impl_->renderPassShadow : impl_->renderPassClear);
+    if (desc.postPass)
+        pipelineInfo.pDepthStencilState = nullptr;
     pipelineInfo.subpass             = 0;
 
     if (vkCreateGraphicsPipelines(impl_->device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline.pipeline) !=
@@ -1751,6 +1970,8 @@ void Device::destroyTexture(TextureHandle handle)
     auto& tex = impl_->textures[handle - 1];
     if (tex.descriptorSet == impl_->cached_descriptor_set)
         impl_->cached_descriptor_set = VK_NULL_HANDLE;
+    if (tex.descriptorSet)
+        vkFreeDescriptorSets(impl_->device, impl_->descriptorPool, 1, &tex.descriptorSet);
     for (std::size_t i = 0; i < impl_->materialSets.size();)
     {
         auto& entry = impl_->materialSets[i];
@@ -1935,7 +2156,8 @@ void Device::setPushConstants(const void* data, std::uint32_t sizeBytes)
 {
     if (!impl_->frameValid || !data || sizeBytes == 0 || sizeBytes > 64)
         return;
-    vkCmdPushConstants(impl_->cmd, impl_->pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeBytes, data);
+    vkCmdPushConstants(impl_->cmd, impl_->pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                       sizeBytes, data);
 }
 
 void Device::bindInstanceBuffer(BufferHandle handle)
@@ -1958,12 +2180,14 @@ void Device::draw(std::uint32_t vertexCount, std::uint32_t startVertex, std::uin
 
 void Device::setViewport(std::uint32_t x, std::uint32_t y, std::uint32_t width, std::uint32_t height)
 {
-    if (!impl_->frameValid || impl_->inShadowPass || impl_->width == 0 || impl_->height == 0)
+    const std::uint32_t limitWidth  = impl_->inTarget ? impl_->currentWidth : impl_->width;
+    const std::uint32_t limitHeight = impl_->inTarget ? impl_->currentHeight : impl_->height;
+    if (!impl_->frameValid || impl_->inShadowPass || limitWidth == 0 || limitHeight == 0)
         return;
-    x = (std::min)(x, impl_->width - 1);
-    y = (std::min)(y, impl_->height - 1);
-    width  = (std::max)(1u, (std::min)(width, impl_->width - x));
-    height = (std::max)(1u, (std::min)(height, impl_->height - y));
+    x = (std::min)(x, limitWidth - 1);
+    y = (std::min)(y, limitHeight - 1);
+    width  = (std::max)(1u, (std::min)(width, limitWidth - x));
+    height = (std::max)(1u, (std::min)(height, limitHeight - y));
 
     VkViewport viewport{static_cast<float>(x),     static_cast<float>(y + height), static_cast<float>(width),
                          -static_cast<float>(height), 0.f,                            1.f};
@@ -1974,7 +2198,10 @@ void Device::setViewport(std::uint32_t x, std::uint32_t y, std::uint32_t width, 
 
 void Device::resetViewport()
 {
-    setViewport(0, 0, impl_->width, impl_->height);
+    if (impl_->inTarget)
+        setViewport(0, 0, impl_->currentWidth, impl_->currentHeight);
+    else
+        setViewport(0, 0, impl_->width, impl_->height);
 }
 
 bool Device::beginShadowPass()
@@ -1983,6 +2210,7 @@ bool Device::beginShadowPass()
         return false;
 
     vkCmdEndRenderPass(impl_->cmd);
+    impl_->mainActive = false;
 
     VkClearValue clear{};
     clear.depthStencil = {1.f, 0};
@@ -2034,6 +2262,201 @@ void Device::endShadowPass()
     vkCmdPipelineBarrier(impl_->cmd, kStages, kStages, 0, 1, &memory, 0, nullptr, 1, &barrier);
 
     impl_->recordMainPass(impl_->renderPassLoad, ClearColor{});
+}
+
+RenderTargetHandle Device::createRenderTarget(const RenderTargetDesc& desc)
+{
+    if (!impl_->device || desc.width == 0 || desc.height == 0)
+        return kInvalidHandle;
+
+    Impl::Target target;
+    target.alive  = true;
+    target.scene  = desc.scene;
+    target.width  = desc.width;
+    target.height = desc.height;
+    const VkFormat format = impl_->swapchainFormat;
+    bool ok               = true;
+    if (desc.scene)
+    {
+        if (impl_->multisampled())
+            ok = impl_->makeImage(desc.width, desc.height, format, impl_->sampleCount,
+                                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT, target.msaaImage,
+                                  target.msaaMemory, target.msaaView);
+        ok = ok && impl_->makeImage(desc.width, desc.height, impl_->depthFormat, impl_->sampleCount,
+                                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                                    VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, target.depthImage,
+                                    target.depthMemory, target.depthView);
+    }
+    const VkImageUsageFlags colorUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ok = ok && impl_->makeImage(desc.width, desc.height, format, VK_SAMPLE_COUNT_1_BIT, colorUsage,
+                                VK_IMAGE_ASPECT_COLOR_BIT, target.colorImage, target.colorMemory, target.colorView);
+    if (ok)
+    {
+        VkImageView views[3];
+        std::uint32_t count = 0;
+        if (desc.scene)
+        {
+            if (impl_->multisampled())
+            {
+                views[count++] = target.msaaView;
+                views[count++] = target.depthView;
+                views[count++] = target.colorView;
+            }
+            else
+            {
+                views[count++] = target.colorView;
+                views[count++] = target.depthView;
+            }
+        }
+        else
+        {
+            views[count++] = target.colorView;
+        }
+        VkFramebufferCreateInfo fbInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fbInfo.renderPass      = desc.scene ? impl_->renderPassTarget : impl_->renderPassPost;
+        fbInfo.attachmentCount = count;
+        fbInfo.pAttachments    = views;
+        fbInfo.width           = desc.width;
+        fbInfo.height          = desc.height;
+        fbInfo.layers          = 1;
+        ok                     = vkCreateFramebuffer(impl_->device, &fbInfo, nullptr, &target.framebuffer) == VK_SUCCESS;
+    }
+    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    if (ok)
+    {
+        VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        alloc.descriptorPool     = impl_->descriptorPool;
+        alloc.descriptorSetCount = 1;
+        alloc.pSetLayouts        = &impl_->descriptorSetLayout;
+        ok                       = vkAllocateDescriptorSets(impl_->device, &alloc, &descriptorSet) == VK_SUCCESS;
+    }
+    if (!ok)
+    {
+        impl_->releaseTarget(target);
+        return kInvalidHandle;
+    }
+
+    VkDescriptorImageInfo imageInfo{};
+    imageInfo.sampler     = impl_->samplers[1];
+    imageInfo.imageView   = target.colorView;
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet          = descriptorSet;
+    write.dstBinding      = 0;
+    write.descriptorCount = 1;
+    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo      = &imageInfo;
+    vkUpdateDescriptorSets(impl_->device, 1, &write, 0, nullptr);
+
+    Impl::TextureSlot slot{};
+    slot.view          = target.colorView;
+    slot.descriptorSet = descriptorSet;
+    slot.sampler       = imageInfo.sampler;
+    impl_->textures.push_back(slot);
+    target.texture = static_cast<TextureHandle>(impl_->textures.size());
+    impl_->targets.push_back(target);
+    return static_cast<RenderTargetHandle>(impl_->targets.size());
+}
+
+void Device::destroyRenderTarget(RenderTargetHandle handle)
+{
+    if (handle == kInvalidHandle || handle > impl_->targets.size() || !impl_->targets[handle - 1].alive)
+        return;
+    Impl::Target& target = impl_->targets[handle - 1];
+    if (target.texture != kInvalidHandle && target.texture <= impl_->textures.size())
+    {
+        Impl::TextureSlot& slot = impl_->textures[target.texture - 1];
+        for (std::size_t i = 0; i < impl_->materialSets.size();)
+        {
+            auto& entry = impl_->materialSets[i];
+            bool uses   = false;
+            for (const TextureHandle used : entry.textures)
+                uses = uses || used == target.texture;
+            if (!uses)
+            {
+                ++i;
+                continue;
+            }
+            if (impl_->cached_material_set == entry.set)
+                impl_->cached_material_set = VK_NULL_HANDLE;
+            vkFreeDescriptorSets(impl_->device, impl_->materialPool, 1, &entry.set);
+            impl_->materialSets.erase(impl_->materialSets.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+        if (slot.descriptorSet == impl_->cached_descriptor_set)
+            impl_->cached_descriptor_set = VK_NULL_HANDLE;
+        if (slot.descriptorSet)
+            vkFreeDescriptorSets(impl_->device, impl_->descriptorPool, 1, &slot.descriptorSet);
+        slot = Impl::TextureSlot{};
+    }
+    impl_->releaseTarget(target);
+}
+
+TextureHandle Device::renderTargetTexture(RenderTargetHandle handle) const
+{
+    if (handle == kInvalidHandle || handle > impl_->targets.size() || !impl_->targets[handle - 1].alive)
+        return kInvalidHandle;
+    return impl_->targets[handle - 1].texture;
+}
+
+bool Device::beginRenderTarget(RenderTargetHandle handle, const ClearColor& clear)
+{
+    if (!impl_->frameValid || impl_->inShadowPass || impl_->inTarget || handle == kInvalidHandle ||
+        handle > impl_->targets.size() || !impl_->targets[handle - 1].alive)
+        return false;
+    const Impl::Target& target = impl_->targets[handle - 1];
+
+    if (impl_->mainActive)
+    {
+        vkCmdEndRenderPass(impl_->cmd);
+        impl_->mainActive = false;
+    }
+
+    VkClearValue clearValues[3]{};
+    clearValues[0].color        = {{clear.r, clear.g, clear.b, clear.a}};
+    clearValues[1].depthStencil = {1.f, 0};
+    VkRenderPassBeginInfo rpInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rpInfo.renderPass        = target.scene ? impl_->renderPassTarget : impl_->renderPassPost;
+    rpInfo.framebuffer       = target.framebuffer;
+    rpInfo.renderArea.extent = {target.width, target.height};
+    rpInfo.clearValueCount   = target.scene ? (impl_->multisampled() ? 3u : 2u) : 1u;
+    rpInfo.pClearValues      = clearValues;
+    vkCmdBeginRenderPass(impl_->cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport viewport{0.f, static_cast<float>(target.height), static_cast<float>(target.width),
+                         -static_cast<float>(target.height), 0.f, 1.f};
+    VkRect2D scissor{{0, 0}, {target.width, target.height}};
+    vkCmdSetViewport(impl_->cmd, 0, 1, &viewport);
+    vkCmdSetScissor(impl_->cmd, 0, 1, &scissor);
+
+    impl_->resetBoundStateCache();
+    impl_->inTarget      = true;
+    impl_->currentWidth  = target.width;
+    impl_->currentHeight = target.height;
+    return true;
+}
+
+void Device::endRenderTarget(bool resumeMain)
+{
+    if (!impl_->frameValid || !impl_->inTarget)
+        return;
+    vkCmdEndRenderPass(impl_->cmd);
+    impl_->inTarget = false;
+    VkMemoryBarrier visible{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    visible.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    visible.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    vkCmdPipelineBarrier(impl_->cmd,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 1,
+                         &visible, 0, nullptr, 0, nullptr);
+    if (resumeMain)
+        impl_->resumeAfterInterrupt();
+}
+
+void Device::resumeMainPass()
+{
+    if (!impl_->frameValid || impl_->inTarget || impl_->inShadowPass)
+        return;
+    impl_->resumeAfterInterrupt();
 }
 
 void Device::bindShadowMap()

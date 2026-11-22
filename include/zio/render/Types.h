@@ -11,6 +11,7 @@ namespace zio::render
 using BufferHandle   = std::uint32_t;
 using PipelineHandle = std::uint32_t;
 using TextureHandle  = std::uint32_t;
+using RenderTargetHandle = std::uint32_t;
 inline constexpr std::uint32_t kInvalidHandle = 0;
 
 enum class BufferType
@@ -63,6 +64,14 @@ struct PipelineDesc
     bool cullBack = false;
     bool stencilOnce = false;
     bool shadowPass = false;
+    bool postPass   = false;
+};
+
+struct RenderTargetDesc
+{
+    std::uint32_t width  = 0;
+    std::uint32_t height = 0;
+    bool scene           = false;
 };
 
 struct ClearColor

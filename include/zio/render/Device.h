@@ -56,6 +56,13 @@ public:
     std::uint32_t shadowAtlasSize() const;
     void setShadowViewport(std::uint32_t x, std::uint32_t y, std::uint32_t width, std::uint32_t height);
 
+    RenderTargetHandle createRenderTarget(const RenderTargetDesc& desc);
+    void destroyRenderTarget(RenderTargetHandle handle);
+    TextureHandle renderTargetTexture(RenderTargetHandle handle) const;
+    bool beginRenderTarget(RenderTargetHandle handle, const ClearColor& clear);
+    void endRenderTarget(bool resumeMain = true);
+    void resumeMainPass();
+
     bool bindUniformBlock(const void* data, std::uint32_t sizeBytes);
 
     void endFrame();

@@ -270,6 +270,64 @@ struct Reader : json::Fields
         return true;
     }
 
+    bool color3(const Value& o, const char* key, const std::string& path, renderer::Color& out)
+    {
+        double n[3] = {};
+        bool has    = false;
+        if (!getNumbers(o, key, path, 3, n, has))
+            return false;
+        if (has)
+            out = {static_cast<float>(n[0]), static_cast<float>(n[1]), static_cast<float>(n[2]), 1.f};
+        return true;
+    }
+
+    bool number(const Value& o, const char* key, const std::string& path, float& out)
+    {
+        double d = 0;
+        bool has = false;
+        if (!getNumber(o, key, path, d, has))
+            return false;
+        if (has)
+            out = static_cast<float>(d);
+        return true;
+    }
+
+    bool environment(const Value& doc, Environment& env)
+    {
+        const Value* o = doc.find("environment");
+        if (!o)
+            return true;
+        if (!std::holds_alternative<Object>(o->v))
+            return fail("environment", "must be an object");
+        const std::string path = "environment";
+        std::string text;
+        bool has = false;
+        if (!getString(*o, "sky", path, text, has))
+            return false;
+        if (has)
+            env.sky = text == "gradient" ? SkyMode::Gradient : (text == "panorama" ? SkyMode::Panorama : SkyMode::None);
+        if (!getString(*o, "panorama", path, text, has))
+            return false;
+        if (has)
+            env.panorama = text;
+        if (!getString(*o, "fog", path, text, has))
+            return false;
+        if (has)
+            env.fog = text == "linear" ? FogMode::Linear : (text == "exponential" ? FogMode::Exponential : FogMode::None);
+        bool flag = false;
+        if (!getBool(*o, "bloom", path, flag, has))
+            return false;
+        if (has)
+            env.bloom = flag;
+        return color3(*o, "zenith", path, env.zenith) && color3(*o, "horizon", path, env.horizon) &&
+               color3(*o, "ground", path, env.ground) && color3(*o, "fogColor", path, env.fogColor) &&
+               color3(*o, "tint", path, env.tint) && number(*o, "fogDensity", path, env.fogDensity) &&
+               number(*o, "fogStart", path, env.fogStart) && number(*o, "fogEnd", path, env.fogEnd) &&
+               number(*o, "bloomThreshold", path, env.bloomThreshold) &&
+               number(*o, "bloomIntensity", path, env.bloomIntensity) && number(*o, "exposure", path, env.exposure) &&
+               number(*o, "contrast", path, env.contrast) && number(*o, "saturation", path, env.saturation);
+    }
+
     bool common(const Value& o, Node3D& node, const std::string& path)
     {
         std::string s;
@@ -499,6 +557,46 @@ void setError(std::string* error, const std::string& msg)
         *error = msg;
 }
 
+std::string colorText(const renderer::Color& c)
+{
+    std::string out;
+    const float v[3] = {c.r, c.g, c.b};
+    writeNums(out, v, 3);
+    return out;
+}
+
+std::string environmentText(const Environment& e)
+{
+    const Environment defaults;
+    std::string out = "  \"environment\": { \"sky\": ";
+    writeString(out, e.sky == SkyMode::Gradient ? "gradient" : (e.sky == SkyMode::Panorama ? "panorama" : "none"));
+    out += ", \"zenith\": " + colorText(e.zenith) + ", \"horizon\": " + colorText(e.horizon) +
+           ", \"ground\": " + colorText(e.ground) + ", \"panorama\": ";
+    writeString(out, e.panorama);
+    out += ", \"fog\": ";
+    writeString(out, e.fog == FogMode::Linear ? "linear" : (e.fog == FogMode::Exponential ? "exponential" : "none"));
+    out += ", \"fogColor\": " + colorText(e.fogColor) + ", \"fogDensity\": ";
+    writeNumber(out, e.fogDensity);
+    out += ", \"fogStart\": ";
+    writeNumber(out, e.fogStart);
+    out += ", \"fogEnd\": ";
+    writeNumber(out, e.fogEnd);
+    out += ", \"bloom\": ";
+    out += e.bloom ? "true" : "false";
+    out += ", \"bloomThreshold\": ";
+    writeNumber(out, e.bloomThreshold);
+    out += ", \"bloomIntensity\": ";
+    writeNumber(out, e.bloomIntensity);
+    out += ", \"exposure\": ";
+    writeNumber(out, e.exposure);
+    out += ", \"contrast\": ";
+    writeNumber(out, e.contrast);
+    out += ", \"saturation\": ";
+    writeNumber(out, e.saturation);
+    out += ", \"tint\": " + colorText(e.tint) + " },\n";
+    return out;
+}
+
 }
 
 std::string serializeScene3D(const Scene3D& scene)
@@ -527,7 +625,9 @@ std::string serializeScene3D(const Scene3D& scene)
     out += l.shadows ? "true" : "false";
     out += ", \"shadowOpacity\": ";
     writeNumber(out, l.shadowOpacity);
-    out += " },\n  \"root\": ";
+    out += " },\n";
+    out += environmentText(scene.environment());
+    out += "  \"root\": ";
     writeNode(out, scene.root(), 1);
     out += "\n}\n";
     return out;
@@ -617,7 +717,8 @@ bool deserializeScene3D(Scene3D& scene, std::string_view jsonText, std::string* 
     Reader reader;
     Camera camera = scene.camera();
     Light light   = scene.light();
-    if (!reader.camera(doc, camera) || !reader.light(doc, light))
+    Environment environment;
+    if (!reader.camera(doc, camera) || !reader.light(doc, light) || !reader.environment(doc, environment))
     {
         setError(error, reader.err);
         return false;
@@ -645,6 +746,7 @@ bool deserializeScene3D(Scene3D& scene, std::string_view jsonText, std::string* 
         root.addChild(built->removeChild(built->children().front().get()));
     scene.camera() = camera;
     scene.light()  = light;
+    scene.environment() = environment;
     return true;
 }
 

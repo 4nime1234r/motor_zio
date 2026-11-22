@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 
 #include "zio/core/Platform.h"
 #include "zio/math/Mat4.h"
@@ -54,6 +55,49 @@ struct LocalLight
 
 inline constexpr std::size_t kMaxLocalLights = 8;
 
+enum class SkyMode
+{
+    None,
+    Gradient,
+    Panorama
+};
+
+enum class FogMode
+{
+    None,
+    Linear,
+    Exponential
+};
+
+struct Environment
+{
+    SkyMode sky              = SkyMode::None;
+    renderer::Color zenith   = {0.25f, 0.45f, 0.80f, 1.f};
+    renderer::Color horizon  = {0.75f, 0.82f, 0.90f, 1.f};
+    renderer::Color ground   = {0.28f, 0.26f, 0.24f, 1.f};
+    std::string panorama;
+
+    FogMode fog              = FogMode::None;
+    renderer::Color fogColor = {0.70f, 0.75f, 0.80f, 1.f};
+    float fogDensity         = 0.02f;
+    float fogStart           = 20.f;
+    float fogEnd             = 120.f;
+
+    bool bloom               = false;
+    float bloomThreshold     = 0.8f;
+    float bloomIntensity     = 0.6f;
+    float exposure           = 1.f;
+    float contrast           = 1.f;
+    float saturation         = 1.f;
+    renderer::Color tint     = renderer::Color::white();
+
+    bool needsPostProcess() const
+    {
+        return bloom || exposure != 1.f || contrast != 1.f || saturation != 1.f || tint.r != 1.f || tint.g != 1.f ||
+               tint.b != 1.f;
+    }
+};
+
 struct MeshStyle
 {
     renderer::Color color = renderer::Color::white();
@@ -100,6 +144,7 @@ public:
         drawMesh(mesh, world, style);
     }
     void addLight(const LocalLight& light);
+    void setEnvironment(const Environment& environment);
     void drawLine(math::Vec3 a, math::Vec3 b, renderer::Color color, float widthPixels = 2.f,
                   LineMode mode = LineMode::Overlay);
     void drawLine(math::Vec3 a, math::Vec3 b, renderer::Color colorA, renderer::Color colorB, float widthPixels,

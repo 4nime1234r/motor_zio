@@ -168,6 +168,18 @@ zio_add_spirv_shader(engine
 zio_add_spirv_shader(engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/shadow.frag shadow_frag.spv.h zio_shadow_frag_spirv)
 zio_add_spirv_shader(engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/post.vert post_vert.spv.h zio_post_vert_spirv)
+zio_add_spirv_shader(engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/bright.frag bright_frag.spv.h zio_bright_frag_spirv)
+zio_add_spirv_shader(engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/blur.frag blur_frag.spv.h zio_blur_frag_spirv)
+zio_add_spirv_shader(engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/composite.frag composite_frag.spv.h zio_composite_frag_spirv)
+zio_add_spirv_shader(engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/sky.vert sky_vert.spv.h zio_sky_vert_spirv)
+zio_add_spirv_shader(engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/sky.frag sky_frag.spv.h zio_sky_frag_spirv)
+zio_add_spirv_shader(engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/shadow_inst.vert shadow_inst_vert.spv.h zio_shadow_inst_vert_spirv)
 
 find_program(ZIO_DOTNET dotnet)
