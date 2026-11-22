@@ -13,12 +13,16 @@ struct Camera
     math::Vec3 up       = {0.f, 1.f, 0.f};
 
     float fovYDegrees = 60.f;
+    bool orthographic = false;
+    float orthoSize   = 5.f;
     float nearZ       = 0.1f;
     float farZ        = 1000.f;
 
     math::Mat4 viewMatrix() const { return math::Mat4::lookAt(position, target, up); }
     math::Mat4 projectionMatrix(float aspect) const
     {
+        if (orthographic)
+            return math::Mat4::orthographic(orthoSize, aspect, nearZ, farZ);
         return math::Mat4::perspective(fovYDegrees, aspect, nearZ, farZ);
     }
 };

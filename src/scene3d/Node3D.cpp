@@ -566,6 +566,8 @@ bool MeshNode::fileCamera(std::size_t index, Camera& out) const
     out.target           = out.position + w.transformVector({0.f, 0.f, -1.f}).normalized();
     out.up               = w.transformVector({0.f, 1.f, 0.f}).normalized();
     out.fovYDegrees      = fc.fovYDegrees;
+    out.orthographic     = fc.orthographic;
+    out.orthoSize        = fc.orthoSize;
     out.nearZ            = fc.nearZ;
     out.farZ             = fc.farZ;
     return true;

@@ -220,6 +220,15 @@ struct Reader : json::Fields
             return false;
         if (has)
             cam.fovYDegrees = static_cast<float>(d);
+        bool orthographic = false;
+        if (!getBool(*o, "orthographic", "camera", orthographic, has))
+            return false;
+        if (has)
+            cam.orthographic = orthographic;
+        if (!getNumber(*o, "orthoSize", "camera", d, has))
+            return false;
+        if (has)
+            cam.orthoSize = static_cast<float>(d);
         if (!getNumber(*o, "near", "camera", d, has))
             return false;
         if (has)
@@ -229,6 +238,8 @@ struct Reader : json::Fields
         if (has)
             cam.farZ = static_cast<float>(d);
 
+        if (cam.orthographic && !(cam.orthoSize > 0.f))
+            return fail("camera", "\"orthoSize\" must be greater than 0");
         if (!(cam.fovYDegrees > 0.f && cam.fovYDegrees < 180.f))
             return fail("camera", "\"fov\" must be between 0 and 180 degrees");
         if (!(cam.nearZ > 0.f && cam.farZ > cam.nearZ))
@@ -613,6 +624,10 @@ std::string serializeScene3D(const Scene3D& scene)
     writeVec3(out, c.up);
     out += ", \"fov\": ";
     writeNumber(out, c.fovYDegrees);
+    out += ", \"orthographic\": ";
+    out += c.orthographic ? "true" : "false";
+    out += ", \"orthoSize\": ";
+    writeNumber(out, c.orthoSize);
     out += ", \"near\": ";
     writeNumber(out, c.nearZ);
     out += ", \"far\": ";

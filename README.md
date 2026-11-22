@@ -18,7 +18,7 @@ Zio es de uso libre, pero no se puede vender: puedes usarlo y modificarlo gratis
 - Escenas guardadas y cargadas desde archivos JSON.
 
 **Gráficos 3D**
-- Escenas con jerarquía de nodos y cámara.
+- Escenas con jerarquía de nodos y cámara, en perspectiva u ortográfica.
 - Carga de modelos `.obj`, `.gltf` y `.glb`: posiciones, normales, coordenadas de textura, transformaciones de nodos y colores de vértice. Los modelos con varios materiales se dibujan con el material de cada parte.
 - Materiales PBR (metálico, rugosidad, mapas de normales, emisivo y oclusión), texturas externas o incrustadas, modos de transparencia (opaco, máscara y mezcla) y doble cara.
 - Cámaras y luces del archivo glTF y morph targets, con pesos fijos o animados desde el archivo.

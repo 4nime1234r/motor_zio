@@ -102,6 +102,7 @@ struct FileCamera
     std::string name;
     bool orthographic  = false;
     float fovYDegrees  = 60.f;
+    float orthoSize    = 5.f;
     float nearZ        = 0.1f;
     float farZ         = 1000.f;
     math::Mat4 world;

@@ -928,6 +928,8 @@ struct Loader
             cam.farZ  = static_cast<float>(number(body->find("zfar"), 1000.0));
             if (!cam.orthographic)
                 cam.fovYDegrees = static_cast<float>(number(body->find("yfov"), 1.0471976)) * 57.29578f;
+            else
+                cam.orthoSize = static_cast<float>(number(body->find("ymag"), 5.0));
         }
         mesh->cameras.push_back(std::move(cam));
     }

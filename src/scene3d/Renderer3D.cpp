@@ -841,7 +841,7 @@ struct Renderer3D::Impl
         int cornerIndex = 0;
         for (const float d : {camera.nearZ, farSlice})
         {
-            const float halfH      = d * tanHalf;
+            const float halfH      = camera.orthographic ? camera.orthoSize : d * tanHalf;
             const float halfW      = halfH * aspect;
             const math::Vec3 mid   = camera.position + forward * d;
             for (const float sxSign : {-1.f, 1.f})
@@ -1335,8 +1335,8 @@ void Renderer3D::end()
             targets[i][1] = rows[i].y;
             targets[i][2] = rows[i].z;
         }
-        block.camRight[3] = tanHalf * s.aspect;
-        block.camUp[3]    = tanHalf;
+        block.camRight[3] = s.camera.orthographic ? 0.f : tanHalf * s.aspect;
+        block.camUp[3]    = s.camera.orthographic ? 0.f : tanHalf;
         const renderer::Color colors[3] = {env.zenith, env.horizon, env.ground};
         float* colorTargets[3]          = {block.skyZenith, block.skyHorizon, block.skyGround};
         for (int i = 0; i < 3; ++i)

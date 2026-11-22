@@ -81,6 +81,16 @@ struct Mat4
         return result;
     }
 
+    static Mat4 orthographic(float halfHeight, float aspect, float nearZ, float farZ)
+    {
+        Mat4 result;
+        result.m[0][0] = 1.f / (halfHeight * aspect);
+        result.m[1][1] = 1.f / halfHeight;
+        result.m[2][2] = 1.f / (nearZ - farZ);
+        result.m[2][3] = nearZ / (nearZ - farZ);
+        return result;
+    }
+
     static Mat4 lookAt(Vec3 eye, Vec3 target, Vec3 up)
     {
         const Vec3 f = (target - eye).normalized();

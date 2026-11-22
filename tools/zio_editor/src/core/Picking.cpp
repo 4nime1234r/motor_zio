@@ -58,6 +58,12 @@ Ray makeRay(const zio::scene3d::Camera& camera, float aspect, float ndcX, float 
     const float tanHalf           = std::tan(camera.fovYDegrees * (3.14159265358979323846f / 180.f) * 0.5f);
 
     Ray ray;
+    if (camera.orthographic)
+    {
+        ray.origin    = camera.position + right * (ndcX * camera.orthoSize * aspect) + up * (ndcY * camera.orthoSize);
+        ray.direction = forward;
+        return ray;
+    }
     ray.origin    = camera.position;
     ray.direction = (forward + right * (ndcX * tanHalf * aspect) + up * (ndcY * tanHalf)).normalized();
     return ray;

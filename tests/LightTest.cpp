@@ -52,6 +52,8 @@ int main()
     scene.environment().bloom    = true;
     scene.environment().exposure = 1.4f;
     scene.environment().tint     = {1.f, 0.9f, 0.8f, 1.f};
+    scene.camera().orthographic = true;
+    scene.camera().orthoSize    = 7.5f;
     const std::string text = serializeScene3D(scene);
 
     Scene3D loaded;
@@ -63,6 +65,21 @@ int main()
           "la niebla de la escena se conserva");
     check(loaded.environment().bloom && near(loaded.environment().exposure, 1.4f) && near(loaded.environment().tint.g, 0.9f),
           "el postproceso de la escena se conserva");
+    check(loaded.camera().orthographic && near(loaded.camera().orthoSize, 7.5f), "la camara ortografica se conserva");
+    {
+        Camera ortho;
+        ortho.orthographic = true;
+        ortho.orthoSize    = 4.f;
+        ortho.position     = {0.f, 0.f, 10.f};
+        ortho.target       = {0.f, 0.f, 0.f};
+        const zio::math::Mat4 vp = ortho.projectionMatrix(2.f) * ortho.viewMatrix();
+        const zio::math::Vec3 edgeX = vp.transformPoint({8.f, 0.f, 0.f});
+        const zio::math::Vec3 edgeY = vp.transformPoint({0.f, 4.f, 0.f});
+        const zio::math::Vec3 nearP = vp.transformPoint({0.f, 0.f, 9.9f});
+        const zio::math::Vec3 farP  = vp.transformPoint({0.f, 0.f, -990.f});
+        check(near(edgeX.x, 1.f) && near(edgeY.y, 1.f), "la camara ortografica mapea su ancho y alto a la pantalla");
+        check(nearP.z < farP.z && nearP.z >= 0.f && farP.z <= 1.001f, "la profundidad ortografica crece con la distancia");
+    }
     check(loaded.root().children().size() == 2, "hay dos luces");
     if (loaded.root().children().size() == 2)
     {
