@@ -306,6 +306,285 @@ zio::ui::NumberEdit* InspectorPanel::addVector(zio::ui::Widget* parent, const ch
     return fields[0];
 }
 
+namespace
+{
+
+using zio::ui::Widget;
+
+zio::ui::NumberEdit* numberField(Widget* parent, const char* label, double step, int decimals,
+                                 std::function<void(double)> onChanged)
+{
+    auto* field = parent->add<zio::ui::NumberEdit>();
+    field->setStep(step);
+    field->setDecimals(decimals);
+    field->setLabel(label);
+    field->setOnChanged(std::move(onChanged));
+    return field;
+}
+
+}
+
+void InspectorPanel::buildMaterialSection(zio::ui::Widget* parent)
+{
+    auto* body = addFoldout(parent, "Material", false);
+    const auto edit = [this](std::function<void(zio::scene3d::MeshNode::MaterialOverride&)> change) {
+        if (syncing_)
+            return;
+        if (auto* mesh = services_.context().selectedMesh())
+        {
+            auto material = mesh->effectiveMaterial();
+            change(material);
+            mesh->setMaterialOverride(material);
+            services_.context().markDirty();
+        }
+    };
+    const auto addNumber = [&](const char* label, double step, float zio::scene3d::MeshNode::MaterialOverride::* member) {
+        auto* field = numberField(body, label, step, 3, [edit, member](double v) {
+            edit([member, v](auto& m) { m.*member = static_cast<float>(v); });
+        });
+        materialSyncers_.push_back([this, field, member]() {
+            if (auto* mesh = services_.context().selectedMesh())
+                if (!field->editing())
+                    field->setValue(mesh->effectiveMaterial().*member);
+        });
+    };
+    addNumber("Metálico", 0.02, &zio::scene3d::MeshNode::MaterialOverride::metallic);
+    addNumber("Rugosidad", 0.02, &zio::scene3d::MeshNode::MaterialOverride::roughness);
+    addNumber("Escala de normales", 0.05, &zio::scene3d::MeshNode::MaterialOverride::normalScale);
+    addNumber("Oclusión", 0.02, &zio::scene3d::MeshNode::MaterialOverride::occlusionStrength);
+    addNumber("Umbral alfa", 0.02, &zio::scene3d::MeshNode::MaterialOverride::alphaCutoff);
+
+    body->add<zio::ui::Label>(std::string("Emisivo"));
+    auto* emissive = body->add<zio::ui::ColorButton>();
+    emissive->setOnChanged([edit](zio::ui::Color c) {
+        edit([c](auto& m) {
+            m.emissive[0] = c.r;
+            m.emissive[1] = c.g;
+            m.emissive[2] = c.b;
+        });
+    });
+    materialSyncers_.push_back([this, emissive]() {
+        if (auto* mesh = services_.context().selectedMesh(); mesh && !services_.ui().hasPopups())
+        {
+            const auto m = mesh->effectiveMaterial();
+            emissive->setColor({m.emissive[0], m.emissive[1], m.emissive[2], 1.f});
+        }
+    });
+
+    auto* alpha = body->add<zio::ui::Button>(std::string("Transparencia: opaco"));
+    alpha->setOnClick([edit]() {
+        edit([](auto& m) {
+            m.alphaMode = m.alphaMode == zio::scene3d::AlphaMode::Opaque ? zio::scene3d::AlphaMode::Mask
+                          : m.alphaMode == zio::scene3d::AlphaMode::Mask ? zio::scene3d::AlphaMode::Blend
+                                                                         : zio::scene3d::AlphaMode::Opaque;
+        });
+    });
+    materialSyncers_.push_back([this, alpha]() {
+        if (auto* mesh = services_.context().selectedMesh())
+        {
+            const auto mode = mesh->effectiveMaterial().alphaMode;
+            alpha->setText(mode == zio::scene3d::AlphaMode::Blend  ? "Transparencia: mezcla"
+                           : mode == zio::scene3d::AlphaMode::Mask ? "Transparencia: máscara"
+                                                                   : "Transparencia: opaco");
+        }
+    });
+
+    auto* two = body->add<zio::ui::CheckBox>(std::string("Doble cara"));
+    two->setOnToggled([edit](bool checked) { edit([checked](auto& m) { m.doubleSided = checked; }); });
+    materialSyncers_.push_back([this, two]() {
+        if (auto* mesh = services_.context().selectedMesh())
+            two->setChecked(mesh->effectiveMaterial().doubleSided);
+    });
+
+    auto* reset = body->add<zio::ui::Button>(std::string("Restablecer al material del modelo"));
+    reset->setOnClick([this]() {
+        if (syncing_)
+            return;
+        if (auto* mesh = services_.context().selectedMesh())
+        {
+            mesh->clearMaterialOverride();
+            services_.context().markDirty();
+        }
+    });
+}
+
+void InspectorPanel::buildSceneSection(zio::ui::Widget* parent)
+{
+    using zio::ui::Color;
+    auto& ctx = services_.context();
+
+    const auto vec3Row = [this, &ctx](Widget* body, const char* title, std::function<zio::math::Vec3()> read,
+                                      std::function<void(zio::math::Vec3)> write) {
+        struct Fields
+        {
+            zio::ui::NumberEdit* f[3] = {};
+        };
+        auto fields = std::make_shared<Fields>();
+        addVector(body, title, fields->f, 0.05, [this, fields, write]() {
+            if (syncing_)
+                return;
+            write({static_cast<float>(fields->f[0]->value()), static_cast<float>(fields->f[1]->value()),
+                   static_cast<float>(fields->f[2]->value())});
+            services_.context().markDirty();
+        });
+        sceneSyncers_.push_back([fields, read]() {
+            const zio::math::Vec3 v = read();
+            const float values[3]   = {v.x, v.y, v.z};
+            for (int i = 0; i < 3; ++i)
+                if (!fields->f[i]->editing())
+                    fields->f[i]->setValue(values[i]);
+        });
+    };
+    const auto number = [this](Widget* body, const char* label, double step, int decimals, std::function<float()> read,
+                               std::function<void(float)> write) {
+        auto* field = numberField(body, label, step, decimals, [this, write](double v) {
+            if (syncing_)
+                return;
+            write(static_cast<float>(v));
+            services_.context().markDirty();
+        });
+        sceneSyncers_.push_back([field, read]() {
+            if (!field->editing())
+                field->setValue(read());
+        });
+    };
+    const auto color = [this](Widget* body, const char* label, std::function<zio::renderer::Color()> read,
+                              std::function<void(zio::renderer::Color)> write) {
+        body->add<zio::ui::Label>(std::string(label));
+        auto* button = body->add<zio::ui::ColorButton>();
+        button->setOnChanged([this, write](Color c) {
+            if (syncing_)
+                return;
+            write({c.r, c.g, c.b, 1.f});
+            services_.context().markDirty();
+        });
+        sceneSyncers_.push_back([this, button, read]() {
+            if (services_.ui().hasPopups())
+                return;
+            const auto c = read();
+            button->setColor({c.r, c.g, c.b, 1.f});
+        });
+    };
+    const auto check = [this](Widget* body, const char* label, std::function<bool()> read, std::function<void(bool)> write) {
+        auto* box = body->add<zio::ui::CheckBox>(std::string(label));
+        box->setOnToggled([this, write](bool checked) {
+            if (syncing_)
+                return;
+            write(checked);
+            services_.context().markDirty();
+        });
+        sceneSyncers_.push_back([box, read]() { box->setChecked(read()); });
+    };
+    const auto cycle = [this](Widget* body, std::function<std::string()> text, std::function<void()> advance) {
+        auto* button = body->add<zio::ui::Button>(std::string());
+        button->setOnClick([this, advance]() {
+            if (syncing_)
+                return;
+            advance();
+            services_.context().markDirty();
+        });
+        sceneSyncers_.push_back([button, text]() { button->setText(text()); });
+    };
+
+    auto* camera = addFoldout(parent, "Cámara de la escena", false);
+    vec3Row(camera, "Posición", [&ctx]() { return ctx.scene().camera().position; },
+            [&ctx](zio::math::Vec3 v) { ctx.scene().camera().position = v; });
+    vec3Row(camera, "Objetivo", [&ctx]() { return ctx.scene().camera().target; },
+            [&ctx](zio::math::Vec3 v) { ctx.scene().camera().target = v; });
+    number(camera, "Campo de visión (°)", 0.5, 1, [&ctx]() { return ctx.scene().camera().fovYDegrees; },
+           [&ctx](float v) { ctx.scene().camera().fovYDegrees = std::clamp(v, 1.f, 170.f); });
+    check(camera, "Ortográfica", [&ctx]() { return ctx.scene().camera().orthographic; },
+          [&ctx](bool v) { ctx.scene().camera().orthographic = v; });
+    number(camera, "Tamaño ortográfico", 0.1, 2, [&ctx]() { return ctx.scene().camera().orthoSize; },
+           [&ctx](float v) { ctx.scene().camera().orthoSize = std::max(v, 0.01f); });
+    number(camera, "Plano cercano", 0.01, 3, [&ctx]() { return ctx.scene().camera().nearZ; },
+           [&ctx](float v) { ctx.scene().camera().nearZ = std::max(v, 0.001f); });
+    number(camera, "Plano lejano", 1.0, 1, [&ctx]() { return ctx.scene().camera().farZ; },
+           [&ctx](float v) { ctx.scene().camera().farZ = std::max(v, ctx.scene().camera().nearZ + 0.1f); });
+
+    auto* light = addFoldout(parent, "Luz de la escena", false);
+    vec3Row(light, "Dirección", [&ctx]() { return ctx.scene().light().direction; },
+            [&ctx](zio::math::Vec3 v) { ctx.scene().light().direction = v; });
+    number(light, "Luz ambiente", 0.02, 2, [&ctx]() { return ctx.scene().light().ambient; },
+           [&ctx](float v) { ctx.scene().light().ambient = std::clamp(v, 0.f, 1.f); });
+    check(light, "Proyecta sombras", [&ctx]() { return ctx.scene().light().shadows; },
+          [&ctx](bool v) { ctx.scene().light().shadows = v; });
+    number(light, "Opacidad de sombra", 0.05, 2, [&ctx]() { return ctx.scene().light().shadowOpacity; },
+           [&ctx](float v) { ctx.scene().light().shadowOpacity = std::clamp(v, 0.f, 1.f); });
+    number(light, "Distancia de sombra", 1.0, 1, [&ctx]() { return ctx.scene().light().shadowDistance; },
+           [&ctx](float v) { ctx.scene().light().shadowDistance = std::max(v, 1.f); });
+
+    auto* env = addFoldout(parent, "Entorno", false);
+    cycle(env,
+          [&ctx]() {
+              const auto sky = ctx.scene().environment().sky;
+              return std::string(sky == zio::scene3d::SkyMode::Gradient   ? "Cielo: degradado"
+                                 : sky == zio::scene3d::SkyMode::Panorama ? "Cielo: panorama"
+                                                                          : "Cielo: ninguno");
+          },
+          [&ctx]() {
+              auto& sky = ctx.scene().environment().sky;
+              sky       = sky == zio::scene3d::SkyMode::None       ? zio::scene3d::SkyMode::Gradient
+                          : sky == zio::scene3d::SkyMode::Gradient ? zio::scene3d::SkyMode::Panorama
+                                                                   : zio::scene3d::SkyMode::None;
+          });
+    color(env, "Cielo arriba", [&ctx]() { return ctx.scene().environment().zenith; },
+          [&ctx](zio::renderer::Color c) { ctx.scene().environment().zenith = c; });
+    color(env, "Horizonte", [&ctx]() { return ctx.scene().environment().horizon; },
+          [&ctx](zio::renderer::Color c) { ctx.scene().environment().horizon = c; });
+    color(env, "Suelo", [&ctx]() { return ctx.scene().environment().ground; },
+          [&ctx](zio::renderer::Color c) { ctx.scene().environment().ground = c; });
+    env->add<zio::ui::Label>(std::string("Panorama (imagen)"));
+    auto* panorama = env->add<zio::ui::LineEdit>();
+    panorama->setOnChanged([this](const std::string& text) {
+        if (syncing_)
+            return;
+        services_.context().scene().environment().panorama = text;
+        services_.context().markDirty();
+    });
+    sceneSyncers_.push_back([&ctx, panorama]() {
+        if (!panorama->focused())
+            panorama->setText(ctx.scene().environment().panorama);
+    });
+    cycle(env,
+          [&ctx]() {
+              const auto fog = ctx.scene().environment().fog;
+              return std::string(fog == zio::scene3d::FogMode::Linear        ? "Niebla: lineal"
+                                 : fog == zio::scene3d::FogMode::Exponential ? "Niebla: exponencial"
+                                                                             : "Niebla: ninguna");
+          },
+          [&ctx]() {
+              auto& fog = ctx.scene().environment().fog;
+              fog       = fog == zio::scene3d::FogMode::None     ? zio::scene3d::FogMode::Linear
+                          : fog == zio::scene3d::FogMode::Linear ? zio::scene3d::FogMode::Exponential
+                                                                 : zio::scene3d::FogMode::None;
+          });
+    color(env, "Color de niebla", [&ctx]() { return ctx.scene().environment().fogColor; },
+          [&ctx](zio::renderer::Color c) { ctx.scene().environment().fogColor = c; });
+    number(env, "Densidad", 0.005, 3, [&ctx]() { return ctx.scene().environment().fogDensity; },
+           [&ctx](float v) { ctx.scene().environment().fogDensity = std::max(v, 0.f); });
+    number(env, "Inicio", 1.0, 1, [&ctx]() { return ctx.scene().environment().fogStart; },
+           [&ctx](float v) { ctx.scene().environment().fogStart = std::max(v, 0.f); });
+    number(env, "Fin", 1.0, 1, [&ctx]() { return ctx.scene().environment().fogEnd; },
+           [&ctx](float v) { ctx.scene().environment().fogEnd = std::max(v, 0.1f); });
+
+    auto* post = addFoldout(parent, "Postproceso", false);
+    check(post, "Bloom", [&ctx]() { return ctx.scene().environment().bloom; },
+          [&ctx](bool v) { ctx.scene().environment().bloom = v; });
+    number(post, "Umbral del bloom", 0.02, 2, [&ctx]() { return ctx.scene().environment().bloomThreshold; },
+           [&ctx](float v) { ctx.scene().environment().bloomThreshold = std::clamp(v, 0.f, 1.f); });
+    number(post, "Intensidad del bloom", 0.05, 2, [&ctx]() { return ctx.scene().environment().bloomIntensity; },
+           [&ctx](float v) { ctx.scene().environment().bloomIntensity = std::max(v, 0.f); });
+    number(post, "Exposición", 0.05, 2, [&ctx]() { return ctx.scene().environment().exposure; },
+           [&ctx](float v) { ctx.scene().environment().exposure = std::max(v, 0.f); });
+    number(post, "Contraste", 0.05, 2, [&ctx]() { return ctx.scene().environment().contrast; },
+           [&ctx](float v) { ctx.scene().environment().contrast = std::max(v, 0.f); });
+    number(post, "Saturación", 0.05, 2, [&ctx]() { return ctx.scene().environment().saturation; },
+           [&ctx](float v) { ctx.scene().environment().saturation = std::max(v, 0.f); });
+    color(post, "Tinte", [&ctx]() { return ctx.scene().environment().tint; },
+          [&ctx](zio::renderer::Color c) { ctx.scene().environment().tint = c; });
+}
+
 std::unique_ptr<zio::ui::Widget> InspectorPanel::build()
 {
     auto scroll = std::make_unique<zio::ui::ScrollContainer>(true, false);
@@ -413,6 +692,11 @@ std::unique_ptr<zio::ui::Widget> InspectorPanel::build()
             services_.context().markDirty();
         }
     });
+
+    buildMaterialSection(meshBody);
+
+    sceneBox_ = fields_->add<zio::ui::VBox>();
+    buildSceneSection(sceneBox_);
 
     lightBox_       = fields_->add<zio::ui::VBox>();
     auto* lightBody = addFoldout(lightBox_, "Luz", true);
@@ -624,6 +908,7 @@ void InspectorPanel::refresh()
     multi_->setVisible(node != nullptr && ctx.selection().size() > 1);
     meshBox_->setVisible(mesh != nullptr);
     lightBox_->setVisible(light != nullptr);
+    sceneBox_->setVisible(node != nullptr && node->parent() == nullptr);
     fields_->setEnabled(!ctx.playing());
     if (!node)
         return;
@@ -689,6 +974,13 @@ void InspectorPanel::refresh()
         if (!lightShadowOpacity_->editing())
             lightShadowOpacity_->setValue(light->shadowOpacity());
     }
+
+    if (node->parent() == nullptr)
+        for (const auto& sync : sceneSyncers_)
+            sync();
+    if (mesh)
+        for (const auto& sync : materialSyncers_)
+            sync();
 
     if (mesh)
     {

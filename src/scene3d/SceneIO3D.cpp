@@ -100,6 +100,29 @@ void writeNode(std::string& out, const Node3D& node, int level)
         out += ",\n";
         field(out, in, "castShadow");
         out += mesh->castShadow() ? "true" : "false";
+        if (mesh->hasMaterialOverride())
+        {
+            const auto& m = mesh->materialOverride();
+            out += ",\n";
+            field(out, in, "material");
+            out += "{ \"metallic\": ";
+            writeNumber(out, m.metallic);
+            out += ", \"roughness\": ";
+            writeNumber(out, m.roughness);
+            out += ", \"emissive\": ";
+            writeNums(out, m.emissive, 3);
+            out += ", \"normalScale\": ";
+            writeNumber(out, m.normalScale);
+            out += ", \"occlusionStrength\": ";
+            writeNumber(out, m.occlusionStrength);
+            out += ", \"alphaMode\": ";
+            writeString(out, m.alphaMode == AlphaMode::Blend ? "blend" : (m.alphaMode == AlphaMode::Mask ? "mask" : "opaque"));
+            out += ", \"alphaCutoff\": ";
+            writeNumber(out, m.alphaCutoff);
+            out += ", \"doubleSided\": ";
+            out += m.doubleSided ? "true" : "false";
+            out += " }";
+        }
         if (mesh->isAnimationPlaying())
         {
             out += ",\n";
@@ -434,6 +457,53 @@ struct Reader : json::Fields
                 return nullptr;
             if (has)
                 mesh->setCastShadow(cast);
+            if (const Value* mo = o.find("material"))
+            {
+                if (!std::holds_alternative<Object>(mo->v))
+                {
+                    fail(path, "\"material\" must be an object");
+                    return nullptr;
+                }
+                MeshNode::MaterialOverride material;
+                double d = 0;
+                double e[3] = {};
+                if (!getNumber(*mo, "metallic", path, d, has))
+                    return nullptr;
+                if (has)
+                    material.metallic = static_cast<float>(d);
+                if (!getNumber(*mo, "roughness", path, d, has))
+                    return nullptr;
+                if (has)
+                    material.roughness = static_cast<float>(d);
+                if (!getNumbers(*mo, "emissive", path, 3, e, has))
+                    return nullptr;
+                if (has)
+                    for (int i = 0; i < 3; ++i)
+                        material.emissive[i] = static_cast<float>(e[i]);
+                if (!getNumber(*mo, "normalScale", path, d, has))
+                    return nullptr;
+                if (has)
+                    material.normalScale = static_cast<float>(d);
+                if (!getNumber(*mo, "occlusionStrength", path, d, has))
+                    return nullptr;
+                if (has)
+                    material.occlusionStrength = static_cast<float>(d);
+                std::string mode;
+                if (!getString(*mo, "alphaMode", path, mode, has))
+                    return nullptr;
+                if (has)
+                    material.alphaMode = mode == "blend" ? AlphaMode::Blend : (mode == "mask" ? AlphaMode::Mask : AlphaMode::Opaque);
+                if (!getNumber(*mo, "alphaCutoff", path, d, has))
+                    return nullptr;
+                if (has)
+                    material.alphaCutoff = static_cast<float>(d);
+                bool two = false;
+                if (!getBool(*mo, "doubleSided", path, two, has))
+                    return nullptr;
+                if (has)
+                    material.doubleSided = two;
+                mesh->setMaterialOverride(material);
+            }
             std::string animation;
             if (!getString(o, "animation", path, animation, has))
                 return nullptr;

@@ -54,6 +54,17 @@ int main()
     scene.environment().tint     = {1.f, 0.9f, 0.8f, 1.f};
     scene.camera().orthographic = true;
     scene.camera().orthoSize    = 7.5f;
+    auto* shiny = scene.root().addChild<MeshNode>();
+    shiny->setName("brillante");
+    {
+        MeshNode::MaterialOverride material;
+        material.metallic     = 0.9f;
+        material.roughness    = 0.25f;
+        material.emissive[1]  = 0.5f;
+        material.alphaMode    = AlphaMode::Mask;
+        material.doubleSided  = true;
+        shiny->setMaterialOverride(material);
+    }
     const std::string text = serializeScene3D(scene);
 
     Scene3D loaded;
@@ -80,7 +91,17 @@ int main()
         check(near(edgeX.x, 1.f) && near(edgeY.y, 1.f), "la camara ortografica mapea su ancho y alto a la pantalla");
         check(nearP.z < farP.z && nearP.z >= 0.f && farP.z <= 1.001f, "la profundidad ortografica crece con la distancia");
     }
-    check(loaded.root().children().size() == 2, "hay dos luces");
+    {
+        const MeshNode* back = nullptr;
+        for (const auto& child : loaded.root().children())
+            if (const auto* m = dynamic_cast<const MeshNode*>(child.get()))
+                back = m;
+        check(back && back->hasMaterialOverride() && near(back->materialOverride().metallic, 0.9f) &&
+                  near(back->materialOverride().roughness, 0.25f) && near(back->materialOverride().emissive[1], 0.5f) &&
+                  back->materialOverride().alphaMode == AlphaMode::Mask && back->materialOverride().doubleSided,
+              "el material editado de una malla se conserva");
+    }
+    check(loaded.root().children().size() == 3, "hay dos luces y una malla");
     if (loaded.root().children().size() == 2)
     {
         const auto* p = dynamic_cast<const LightNode*>(loaded.root().children()[0].get());

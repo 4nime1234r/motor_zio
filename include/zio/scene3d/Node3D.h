@@ -130,6 +130,27 @@ public:
     void setCastShadow(bool cast) { castShadow_ = cast; }
     bool castShadow() const { return castShadow_; }
 
+    struct MaterialOverride
+    {
+        float metallic          = 0.f;
+        float roughness         = 1.f;
+        float emissive[3]       = {0.f, 0.f, 0.f};
+        float normalScale       = 1.f;
+        float occlusionStrength = 1.f;
+        AlphaMode alphaMode     = AlphaMode::Opaque;
+        float alphaCutoff       = 0.5f;
+        bool doubleSided        = false;
+    };
+    bool hasMaterialOverride() const { return hasOverride_; }
+    const MaterialOverride& materialOverride() const { return override_; }
+    MaterialOverride effectiveMaterial() const;
+    void setMaterialOverride(const MaterialOverride& material)
+    {
+        override_    = material;
+        hasOverride_ = true;
+    }
+    void clearMaterialOverride() { hasOverride_ = false; }
+
     std::size_t morphTargetCount() const { return mesh_ ? mesh_->morphTargets.size() : 0; }
     const std::string& morphTargetName(std::size_t index) const;
     void setMorphWeight(std::size_t index, float weight);
@@ -202,6 +223,8 @@ private:
     std::vector<AnimationLayer> layers_;
     std::vector<math::Mat4> skinMatrices_;
     std::shared_ptr<AnimationGraph> graph_;
+    MaterialOverride override_;
+    bool hasOverride_ = false;
     std::vector<float> morphWeights_;
     std::string morphClip_;
     float morphTime_     = 0.f;

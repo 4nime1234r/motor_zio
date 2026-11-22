@@ -76,7 +76,7 @@ El editor vive en `tools/zio_editor` y está hecho con `zio::ui`.
 - **Escena:** árbol de nodos con filtro y botón para añadir nodos vacíos, cubos y modelos `.obj`, `.gltf` y `.glb`.
 - **Sistema de archivos:** lista plana con todos los archivos del proyecto, sin carpetas, con filtro. Crear, editar y eliminar aparecen únicamente al hacer clic derecho. Cada archivo nuevo va a la carpeta que le corresponde según su tipo, y los scripts de C++ nuevos traen su plantilla.
 - **Visor 3D:** cuadrícula, selección por clic y gizmos para mover, rotar y escalar, con la pestaña de la escena arriba.
-- **Inspector:** secciones plegables con posición, rotación y escala; color, escala UV y sombra de las mallas; animación de huesos (elegir, reproducir, bucle y velocidad) y scripts de cada nodo. Las animaciones se ven moverse también fuera del modo Jugar.
+- **Inspector:** secciones plegables con posición, rotación y escala; color, escala UV, sombra y material de las mallas (metálico, rugosidad, emisivo, transparencia); cámara, luz, entorno y postproceso de la escena al seleccionar la raíz; animación de huesos (elegir, reproducir, bucle y velocidad) y scripts de cada nodo. Las animaciones se ven moverse también fuera del modo Jugar.
 - **Salida:** registro con hora de lo que hace el editor.
 - **Rendimiento:** milisegundos por fotograma, memoria, llamadas de dibujo y tareas.
 - Los paneles se pueden colocar a la izquierda, a la derecha o abajo desde el menú Ver.

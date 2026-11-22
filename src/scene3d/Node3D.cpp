@@ -241,17 +241,38 @@ void MeshNode::loadPartTextures()
     }
 }
 
+MeshNode::MaterialOverride MeshNode::effectiveMaterial() const
+{
+    if (hasOverride_)
+        return override_;
+    MaterialOverride out;
+    if (mesh_)
+    {
+        const Material& m = mesh_->material;
+        out.metallic          = m.metallic;
+        out.roughness         = m.roughness;
+        out.normalScale       = m.normalScale;
+        out.occlusionStrength = m.occlusionStrength;
+        out.alphaMode         = m.alphaMode;
+        out.alphaCutoff       = m.alphaCutoff;
+        out.doubleSided       = m.doubleSided;
+        for (int i = 0; i < 3; ++i)
+            out.emissive[i] = m.emissive[i];
+    }
+    return out;
+}
+
 void MeshNode::applyMaterial(MeshStyle& style, const Material& material, const MaterialTextures& textures) const
 {
-    style.metallic          = material.metallic;
-    style.roughness         = material.roughness;
-    style.normalScale       = material.normalScale;
-    style.occlusionStrength = material.occlusionStrength;
-    style.alphaMode         = material.alphaMode;
-    style.alphaCutoff       = material.alphaCutoff;
-    style.doubleSided       = material.doubleSided;
+    style.metallic          = hasOverride_ ? override_.metallic : material.metallic;
+    style.roughness         = hasOverride_ ? override_.roughness : material.roughness;
+    style.normalScale       = hasOverride_ ? override_.normalScale : material.normalScale;
+    style.occlusionStrength = hasOverride_ ? override_.occlusionStrength : material.occlusionStrength;
+    style.alphaMode         = hasOverride_ ? override_.alphaMode : material.alphaMode;
+    style.alphaCutoff       = hasOverride_ ? override_.alphaCutoff : material.alphaCutoff;
+    style.doubleSided       = hasOverride_ ? override_.doubleSided : material.doubleSided;
     for (int i = 0; i < 3; ++i)
-        style.emissive[i] = material.emissive[i];
+        style.emissive[i] = hasOverride_ ? override_.emissive[i] : material.emissive[i];
     auto handle = [](const std::shared_ptr<renderer::Texture>& t)
     { return t ? t->handle : render::kInvalidHandle; };
     style.normalTexture            = handle(textures.normal);

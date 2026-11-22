@@ -109,6 +109,11 @@ private:
     const zio::scene3d::Node3D* scriptNode_ = nullptr;
     void rebuildScripts(zio::scene3d::Node3D& node);
     std::vector<std::string> scriptCandidates(const zio::scene3d::Node3D& node) const;
+    zio::ui::Widget* sceneBox_    = nullptr;
+    std::vector<std::function<void()>> sceneSyncers_;
+    std::vector<std::function<void()>> materialSyncers_;
+    void buildMaterialSection(zio::ui::Widget* parent);
+    void buildSceneSection(zio::ui::Widget* parent);
     bool syncing_ = false;
 };
 
