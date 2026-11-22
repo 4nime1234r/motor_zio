@@ -76,6 +76,15 @@ enum class FileLightType
     Directional
 };
 
+struct MorphClip
+{
+    std::string name;
+    std::vector<float> times;
+    std::vector<float> values;
+    bool step      = false;
+    float duration = 0.f;
+};
+
 struct FileLight
 {
     std::string name;
@@ -119,6 +128,7 @@ public:
     std::map<std::string, std::vector<std::uint8_t>> embeddedImages;
     std::vector<MorphTarget> morphTargets;
     std::vector<float> morphWeights;
+    std::vector<MorphClip> morphClips;
     std::vector<FileCamera> cameras;
     std::vector<FileLight> lights;
     std::shared_ptr<Skin> skin;

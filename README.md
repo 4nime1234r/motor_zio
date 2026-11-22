@@ -6,7 +6,7 @@
 
 Zio es un motor de juegos 2D y 3D escrito en C++20 para Windows y Linux. Renderiza con Vulkan e incluye un editor visual (por ahora solo para Windows) para montar escenas sin escribir código.
 
-Es un proyecto en desarrollo activo. La versión actual es la **0.4.0**.
+Es un proyecto en desarrollo activo. La versión actual es la **0.4.1**.
 
 Zio es de uso libre, pero no se puede vender: puedes usarlo y modificarlo gratis, dando crédito a su autor, y no puedes venderlo ni cobrar por él. Mira la sección [Licencia](#licencia).
 
@@ -21,8 +21,8 @@ Zio es de uso libre, pero no se puede vender: puedes usarlo y modificarlo gratis
 - Escenas con jerarquía de nodos y cámara.
 - Carga de modelos `.obj`, `.gltf` y `.glb`: posiciones, normales, coordenadas de textura, transformaciones de nodos y colores de vértice. Los modelos con varios materiales se dibujan con el material de cada parte.
 - Materiales PBR (metálico, rugosidad, mapas de normales, emisivo y oclusión), texturas externas o incrustadas, modos de transparencia (opaco, máscara y mezcla) y doble cara.
-- Cámaras y luces del archivo glTF y morph targets con pesos fijos.
-- Antialiasing MSAA (4 muestras por defecto), descarte de objetos fuera de la cámara y dibujo instanciado en GPU de mallas estáticas repetidas.
+- Cámaras y luces del archivo glTF y morph targets, con pesos fijos o animados desde el archivo.
+- Antialiasing MSAA (4 muestras por defecto), descarte de objetos fuera de la cámara y dibujo instanciado en GPU de mallas estáticas repetidas, también en las sombras.
 - Prefabs: escenas reutilizables dentro de otras.
 - Animación de huesos: varios esqueletos por modelo, hasta 8 huesos por vértice, interpolación lineal, por pasos y de curva cúbica, y transición suave entre animaciones. La animación en curso se guarda en la escena.
 - Iluminación por píxel con luz direccional, luces puntuales y luces focales (hasta 8 por escena, con color, intensidad y alcance) y sombras reales con mapa de sombras suavizado en las tres.
@@ -202,7 +202,7 @@ La carpeta `projects/` contiene ejemplos completos, entre ellos `Prueba3D`, una 
 ## Limitaciones actuales
 
 - El editor solo funciona en Windows. En Linux los juegos abren ventana y dibujan con Vulkan (X11 y Wayland). El texto usa las fuentes TrueType que haya instaladas, y los scripts compilados desde el editor siguen siendo solo de Windows.
-- No hay iluminación por imagen ni cielo, así que los materiales muy metálicos se ven oscuros. Los pesos de los morph targets no se animan desde el archivo.
+- No hay cielo ni iluminación por imagen: los metales reflejan solo un degradado ambiental y las luces de la escena.
 - Los cambios hechos a los nodos de dentro de un prefab instanciado no se guardan en la escena.
 - La animación de huesos se calcula en la CPU.
 

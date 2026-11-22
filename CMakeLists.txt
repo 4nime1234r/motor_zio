@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(motor_zio VERSION 0.4.0 LANGUAGES CXX C)
+project(motor_zio VERSION 0.4.1 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -166,6 +166,8 @@ zio_add_spirv_shader(engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/mesh3d_inst.vert mesh3d_inst_vert.spv.h zio_mesh3d_inst_vert_spirv)
 zio_add_spirv_shader(engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/shadow.frag shadow_frag.spv.h zio_shadow_frag_spirv)
+zio_add_spirv_shader(engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/shadow_inst.vert shadow_inst_vert.spv.h zio_shadow_inst_vert_spirv)
 
 find_program(ZIO_DOTNET dotnet)
 set(ZIO_BRIDGE_CPP ${CMAKE_CURRENT_BINARY_DIR}/ZioScriptingData.cpp)

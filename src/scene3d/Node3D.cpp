@@ -334,8 +334,91 @@ void MeshNode::setAnimationTime(float seconds)
         pose();
 }
 
+std::vector<std::string> MeshNode::morphAnimationNames() const
+{
+    std::vector<std::string> names;
+    if (mesh_)
+        for (const MorphClip& clip : mesh_->morphClips)
+            names.push_back(clip.name);
+    return names;
+}
+
+bool MeshNode::playMorphAnimation(const std::string& name, bool loop)
+{
+    if (!mesh_)
+        return false;
+    for (const MorphClip& clip : mesh_->morphClips)
+        if (clip.name == name)
+        {
+            morphClip_    = name;
+            morphLoop_    = loop;
+            morphTime_    = 0.f;
+            morphPlaying_ = true;
+            sampleMorph(clip);
+            return true;
+        }
+    return false;
+}
+
+void MeshNode::sampleMorph(const MorphClip& clip)
+{
+    const std::size_t targets = morphWeights_.size();
+    if (targets == 0 || clip.times.empty())
+        return;
+    const float t = morphTime_;
+    std::size_t next = 0;
+    while (next < clip.times.size() && clip.times[next] <= t)
+        ++next;
+    for (std::size_t i = 0; i < targets; ++i)
+    {
+        float w;
+        if (next == 0)
+            w = clip.values[i];
+        else if (next >= clip.times.size())
+            w = clip.values[(clip.times.size() - 1) * targets + i];
+        else
+        {
+            const float a = clip.values[(next - 1) * targets + i];
+            const float b = clip.values[next * targets + i];
+            const float span = clip.times[next] - clip.times[next - 1];
+            const float f    = span > 0.f ? (t - clip.times[next - 1]) / span : 0.f;
+            w = clip.step ? a : a + (b - a) * f;
+        }
+        morphWeights_[i] = w;
+    }
+    applyMorph();
+    if (animPlaying_)
+        pose();
+}
+
 void MeshNode::update(float dt)
 {
+    if (morphPlaying_ && mesh_)
+    {
+        const MorphClip* playing = nullptr;
+        for (const MorphClip& clip : mesh_->morphClips)
+            if (clip.name == morphClip_)
+                playing = &clip;
+        if (!playing)
+        {
+            morphPlaying_ = false;
+        }
+        else
+        {
+            morphTime_ += dt * animSpeed_;
+            if (playing->duration > 0.f)
+            {
+                if (morphLoop_)
+                    morphTime_ = std::fmod(morphTime_, playing->duration);
+                else if (morphTime_ >= playing->duration)
+                {
+                    morphTime_    = playing->duration;
+                    morphPlaying_ = false;
+                }
+            }
+            sampleMorph(*playing);
+        }
+    }
     if (!animPlaying_ || !mesh_ || !mesh_->skin)
         return;
     const AnimationClip* clip = mesh_->skin->findClip(animName_);

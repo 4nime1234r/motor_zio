@@ -134,6 +134,11 @@ public:
     void setMorphWeight(std::size_t index, float weight);
     float morphWeight(std::size_t index) const { return index < morphWeights_.size() ? morphWeights_[index] : 0.f; }
 
+    std::vector<std::string> morphAnimationNames() const;
+    bool playMorphAnimation(const std::string& name, bool loop = true);
+    void stopMorphAnimation() { morphPlaying_ = false; }
+    bool isMorphAnimationPlaying() const { return morphPlaying_; }
+
     std::size_t addFileLights();
     bool fileCamera(std::size_t index, Camera& out) const;
 
@@ -172,6 +177,11 @@ private:
     };
     std::vector<MaterialTextures> materialTextures_;
     std::vector<float> morphWeights_;
+    std::string morphClip_;
+    float morphTime_     = 0.f;
+    bool morphLoop_      = true;
+    bool morphPlaying_   = false;
+    void sampleMorph(const MorphClip& clip);
     std::shared_ptr<Mesh> morphed_;
     void applyMorph();
     void loadPartTextures();

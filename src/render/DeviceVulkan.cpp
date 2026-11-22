@@ -742,7 +742,10 @@ struct Device::Impl
 
         VkDescriptorSetLayout setLayouts[kLayoutSets] = {descriptorSetLayout, descriptorSetLayout, uniformSetLayout,
                                                          materialSetLayout};
+        VkPushConstantRange pushRange{VK_SHADER_STAGE_VERTEX_BIT, 0, 64};
         VkPipelineLayoutCreateInfo plInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        plInfo.pushConstantRangeCount = 1;
+        plInfo.pPushConstantRanges    = &pushRange;
         plInfo.setLayoutCount = kLayoutSets;
         plInfo.pSetLayouts    = setLayouts;
         if (vkCreatePipelineLayout(device, &plInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
@@ -1328,6 +1331,8 @@ bool Device::resize(std::uint32_t width, std::uint32_t height)
 
 BufferHandle Device::createBuffer(const BufferDesc& desc)
 {
+    if (!impl_->device)
+        return kInvalidHandle;
     const VkBufferUsageFlags usage =
         desc.type == BufferType::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
 
@@ -1389,7 +1394,7 @@ void Device::destroyBuffer(BufferHandle handle)
 
 bool Device::updateBuffer(BufferHandle handle, const void* data, std::uint32_t sizeBytes)
 {
-    if (handle == kInvalidHandle || handle > impl_->buffers.size())
+    if (!impl_->device || handle == kInvalidHandle || handle > impl_->buffers.size())
         return false;
 
     auto& slot = impl_->buffers[handle - 1];
@@ -1424,6 +1429,8 @@ bool Device::updateBuffer(BufferHandle handle, const void* data, std::uint32_t s
 
 PipelineHandle Device::createPipeline(const PipelineDesc& desc)
 {
+    if (!impl_->device)
+        return kInvalidHandle;
     if (desc.vertexShaderSpirv.empty() || desc.pixelShaderSpirv.empty())
         return kInvalidHandle;
 
@@ -1603,6 +1610,8 @@ void Device::destroyPipeline(PipelineHandle handle)
 
 TextureHandle Device::createTexture(const TextureDesc& desc)
 {
+    if (!impl_->device)
+        return kInvalidHandle;
     const VkDeviceSize imageSize = static_cast<VkDeviceSize>(desc.width) * desc.height * 4;
 
     VkBuffer stagingBuffer        = VK_NULL_HANDLE;
@@ -1920,6 +1929,13 @@ void Device::bindMaterialTextures(const TextureHandle textures[4])
     vkCmdBindDescriptorSets(impl_->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, impl_->pipelineLayout, 3, 1, &set, 0,
                             nullptr);
     impl_->cached_material_set = set;
+}
+
+void Device::setPushConstants(const void* data, std::uint32_t sizeBytes)
+{
+    if (!impl_->frameValid || !data || sizeBytes == 0 || sizeBytes > 64)
+        return;
+    vkCmdPushConstants(impl_->cmd, impl_->pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeBytes, data);
 }
 
 void Device::bindInstanceBuffer(BufferHandle handle)

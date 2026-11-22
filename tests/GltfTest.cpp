@@ -119,6 +119,8 @@ std::string extrasJson(const std::string& bufferEntry)
            R"("cameras":[{"type":"perspective","perspective":{"yfov":1.0,"znear":0.5,"zfar":50}}],)"
            R"("nodes":[{"mesh":0,"weights":[0.5]},{"camera":0,"translation":[0,2,5]},)"
            R"({"extensions":{"KHR_lights_punctual":{"light":0}},"translation":[1,2,3]}],)"
+           R"("animations":[{"name":"subir","samplers":[{"input":3,"output":4,"interpolation":"LINEAR"}],)"
+           R"("channels":[{"sampler":0,"target":{"node":0,"path":"weights"}}]}],)"
            R"("meshes":[{"extras":{"targetNames":["subir"]},"primitives":[{"attributes":{"POSITION":0,"COLOR_0":0},)"
            R"("indices":2,"material":0,"targets":[{"POSITION":0}]}]}],)"
            R"("materials":[{"alphaMode":"MASK","alphaCutoff":0.3,"doubleSided":true,)"
@@ -127,10 +129,13 @@ std::string extrasJson(const std::string& bufferEntry)
            R"("buffers":[)" +
            bufferEntry +
            R"(],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":24},)"
-           R"({"buffer":0,"byteOffset":60,"byteLength":6}],)"
+           R"({"buffer":0,"byteOffset":60,"byteLength":6},{"buffer":0,"byteOffset":68,"byteLength":8},)"
+           R"({"buffer":0,"byteOffset":76,"byteLength":8}],)"
            R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},)"
            R"({"bufferView":1,"componentType":5126,"count":3,"type":"VEC2"},)"
-           R"({"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"}]})";
+           R"({"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"},)"
+           R"({"bufferView":3,"componentType":5126,"count":2,"type":"SCALAR"},)"
+           R"({"bufferView":4,"componentType":5126,"count":2,"type":"SCALAR"}]})";
 }
 
 void write(const std::filesystem::path& path, const std::string& bytes)
@@ -219,7 +224,12 @@ int main()
           "pbr: valores por defecto de glTF (metalico 1, rugosidad 1)");
 
     const auto extrasPath = dir / "extras.gltf";
-    write(extrasPath, extrasJson(R"({"byteLength":66,"uri":"data:application/octet-stream;base64,)" + base64(buffer) +
+    std::vector<std::uint8_t> extrasBuffer = buffer;
+    extrasBuffer.resize(68, 0);
+    const float morphKeys[4] = {0.f, 1.f, 0.f, 1.f};
+    const auto* morphBytes   = reinterpret_cast<const std::uint8_t*>(morphKeys);
+    extrasBuffer.insert(extrasBuffer.end(), morphBytes, morphBytes + sizeof(morphKeys));
+    write(extrasPath, extrasJson(R"({"byteLength":84,"uri":"data:application/octet-stream;base64,)" + base64(extrasBuffer) +
                                  R"("})"));
     const auto extras = zio::scene3d::Mesh::fromSource(extrasPath.string(), &error);
     check(extras != nullptr, "extras: carga");
@@ -248,6 +258,16 @@ int main()
         check(extrasNode.setMeshSource(extrasPath.string(), &error), "extras: MeshNode");
         check(extrasNode.morphTargetCount() == 1 && near(extrasNode.morphWeight(0), 0.5f), "extras: pesos morph en el nodo");
         check(extrasNode.addFileLights() == 1 && extrasNode.children().size() == 1, "extras: luces del archivo como nodos");
+        check(extras->morphClips.size() == 1 && extras->morphClips[0].name == "subir" &&
+                  near(extras->morphClips[0].duration, 1.f),
+              "extras: animacion de pesos morph");
+        check(extrasNode.morphAnimationNames().size() == 1 && extrasNode.playMorphAnimation("subir", false),
+              "extras: se reproduce la animacion de morph");
+        extrasNode.update(0.5f);
+        check(near(extrasNode.morphWeight(0), 0.5f), "extras: el peso morph avanza con el tiempo");
+        extrasNode.update(1.f);
+        check(near(extrasNode.morphWeight(0), 1.f) && !extrasNode.isMorphAnimationPlaying(),
+              "extras: la animacion de morph termina en el ultimo valor");
         zio::scene3d::Camera cam;
         check(extrasNode.fileCamera(0, cam) && near(cam.position.y, 2.f) && near(cam.nearZ, 0.5f),
               "extras: camara del archivo en el nodo");

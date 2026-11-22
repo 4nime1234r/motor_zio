@@ -1112,7 +1112,7 @@ void EditorApp::onBeforeTick(float dt)
 void EditorApp::previewAnimations(zio::scene3d::Node3D& node, float dt)
 {
     if (auto* mesh = dynamic_cast<zio::scene3d::MeshNode*>(&node))
-        if (mesh->isAnimationPlaying())
+        if (mesh->isAnimationPlaying() || mesh->isMorphAnimationPlaying())
             mesh->update(dt);
     for (const auto& child : node.children())
         previewAnimations(*child, dt);

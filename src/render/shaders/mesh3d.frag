@@ -222,7 +222,11 @@ void main()
     }
 
     vec3 lighting = vec3(ambient + (1.0 - ambient) * dirTerm) + local;
-    vec3 specular = dirSpec * (1.0 - ambient) + localSpec + f0 * ambient;
+    vec3 reflected = reflect(-v, n);
+    float skyMix   = clamp(reflected.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 envLight  = vec3(ambient) * mix(vec3(0.45), vec3(1.6), skyMix);
+    vec3 fresnelR  = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - nv, 5.0);
+    vec3 specular  = dirSpec * (1.0 - ambient) + localSpec + fresnelR * envLight * (1.0 - 0.6 * roughness);
     vec3 color    = (diffuseColor * lighting + specular) * occlusion + emissive;
     outColor      = vec4(color, base.a);
 }

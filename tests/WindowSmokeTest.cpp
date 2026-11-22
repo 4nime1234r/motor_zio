@@ -47,6 +47,7 @@ public:
     int center[4]      = {};
     int centerInstanced[4] = {};
     int centerTextured[4]  = {};
+    int centerShadowed[4]  = {};
     bool fullscreenSet     = false;
     bool fullscreenMode    = false;
     bool restoredMode      = false;
@@ -68,10 +69,11 @@ protected:
 
     void onRender(float) override
     {
-        if (frames != 5 && frames != 6 && frames != 7)
+        if (frames != 4 && frames != 5 && frames != 6 && frames != 7)
             return;
         const bool second = frames == 6;
         const bool textured = frames == 7;
+        const bool shadowed = frames == 4;
         auto& renderer = scene3d::Renderer3D::instance();
         if (!renderer.ensureInitialized())
             return;
@@ -79,10 +81,25 @@ protected:
         camera.position = {0.f, 0.f, 5.f};
         camera.target   = {0.f, 0.f, 0.f};
         scene3d::Light light;
+        light.shadows = shadowed;
         const auto cube = scene3d::Mesh::cube(1.f);
         auto& device = render::Device::instance();
         device.beginFrame(render::ClearColor{0.f, 0.f, 0.f, 1.f});
         renderer.begin(camera, light, 640, 360);
+        if (shadowed)
+        {
+            renderer.drawMesh(*cube, math::Mat4::translation({0.f, 0.f, 0.f}), renderer::Color::white());
+            renderer.drawMesh(*cube, math::Mat4::translation({2.f, 0.f, 0.f}), renderer::Color::white());
+            renderer.drawMesh(*cube, math::Mat4::translation({0.f, -1.f, 0.f}) * math::Mat4::scale({6.f, 0.1f, 6.f}),
+                              renderer::Color::white());
+            renderer.end();
+            std::uint8_t px[4] = {};
+            device.readBackPixel(320, 180, px);
+            device.endFrame();
+            for (int i = 0; i < 4; ++i)
+                centerShadowed[i] = px[i];
+            return;
+        }
         if (textured)
         {
             const std::uint8_t flat[4]  = {128, 128, 255, 255};
@@ -161,6 +178,7 @@ protected:
 
 int main()
 {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     Smoke app;
     core::AppConfig config;
     config.title        = "zio smoke";
@@ -189,6 +207,8 @@ int main()
           "el dibujo instanciado coincide con el normal");
     check(app.drawn == 0 || app.centerTextured[0] + app.centerTextured[1] + app.centerTextured[2] > 120,
           "un material con mapa de normales y de rugosidad se dibuja");
+    check(app.drawn == 0 || app.centerShadowed[0] + app.centerShadowed[1] + app.centerShadowed[2] > 120,
+          "las sombras de mallas repetidas se dibujan sin romper la escena");
     check(app.fullscreenSet && app.fullscreenMode && app.fullscreenWidth > 640, "la ventana pasa a pantalla completa");
     check(app.restoredMode && app.restoredWidth == 640, "la ventana vuelve a modo ventana con su tamano");
     check(app.drawn == 0 || app.culled == 2, "el descarte quita los objetos fuera de la camara");

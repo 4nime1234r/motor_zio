@@ -15,6 +15,7 @@
 #include "mesh3d_inst_vert.spv.h"
 #include "mesh3d_vert.spv.h"
 #include "shadow_frag.spv.h"
+#include "shadow_inst_vert.spv.h"
 
 namespace zio::scene3d
 {
@@ -212,6 +213,7 @@ struct Renderer3D::Impl
     std::size_t instanced = 0;
     render::PipelineHandle instancedPipeline          = render::kInvalidHandle;
     render::PipelineHandle instancedTwoSidedPipeline  = render::kInvalidHandle;
+    render::PipelineHandle shadowInstancedPipeline    = render::kInvalidHandle;
     render::BufferHandle instanceBuffer               = render::kInvalidHandle;
 
     struct Line
@@ -258,7 +260,7 @@ struct Renderer3D::Impl
         return render::Device::instance().createPipeline(desc);
     }
 
-    render::PipelineHandle makeInstancedPipeline(bool cullBack)
+    render::PipelineHandle makeInstancedPipeline(bool cullBack, bool shadow = false)
     {
         render::VertexAttribute attrs[] = {
             {"POSITION", 0, render::VertexFormat::Float3, offsetof(Vertex3D, position)},
@@ -279,8 +281,11 @@ struct Renderer3D::Impl
             {"TEXCOORD", 10, render::VertexFormat::Float4, offsetof(InstanceData, flagsUv)},
         };
         render::PipelineDesc desc{};
-        desc.vertexShaderSpirv       = zio_mesh3d_inst_vert_spirv;
-        desc.pixelShaderSpirv        = zio_mesh3d_frag_spirv;
+        desc.vertexShaderSpirv       = shadow ? std::span<const std::uint32_t>(zio_shadow_inst_vert_spirv)
+                                              : std::span<const std::uint32_t>(zio_mesh3d_inst_vert_spirv);
+        desc.pixelShaderSpirv        = shadow ? std::span<const std::uint32_t>(zio_shadow_frag_spirv)
+                                              : std::span<const std::uint32_t>(zio_mesh3d_frag_spirv);
+        desc.shadowPass              = shadow;
         desc.attributes              = attrs;
         desc.attributeCount          = 4;
         desc.vertexStrideBytes       = sizeof(Vertex3D);
@@ -379,6 +384,41 @@ struct Renderer3D::Impl
         out.flagsUv[3]      = 0.f;
     }
 
+    bool drawInstancedShadow(const std::vector<const Command*>& cmds, const math::Mat4& lightMatrix)
+    {
+        const Command& head           = *cmds.front();
+        const render::BufferHandle vb = meshBuffer(*head.mesh);
+        if (vb == render::kInvalidHandle)
+            return false;
+
+        flush();
+        auto& device = render::Device::instance();
+        device.bindPipeline(shadowInstancedPipeline);
+        device.bindVertexBuffer(vb, sizeof(Vertex3D));
+        float matrix[16];
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                matrix[c * 4 + r] = lightMatrix.m[r][c];
+        device.setPushConstants(matrix, sizeof(matrix));
+
+        std::vector<InstanceData> data;
+        for (std::size_t first = 0; first < cmds.size(); first += kMaxInstances)
+        {
+            const std::size_t last = std::min(cmds.size(), first + kMaxInstances);
+            data.resize(last - first);
+            for (std::size_t i = first; i < last; ++i)
+                fillInstance(*cmds[i], data[i - first]);
+            if (!device.updateBuffer(instanceBuffer, data.data(),
+                                     static_cast<std::uint32_t>(data.size() * sizeof(InstanceData))))
+                return true;
+            device.bindInstanceBuffer(instanceBuffer);
+            device.draw(static_cast<std::uint32_t>(head.count), static_cast<std::uint32_t>(head.first),
+                        static_cast<std::uint32_t>(data.size()));
+        }
+        currentPipeline = render::kInvalidHandle;
+        return true;
+    }
+
     bool drawInstanced(const std::vector<Command*>& cmds, std::size_t begin, std::size_t end)
     {
         const Command& head = *cmds[begin];
@@ -446,12 +486,14 @@ struct Renderer3D::Impl
 
         instancedPipeline         = makeInstancedPipeline(true);
         instancedTwoSidedPipeline = makeInstancedPipeline(false);
+        shadowInstancedPipeline   = makeInstancedPipeline(false, true);
         render::BufferDesc ib{};
         ib.type      = render::BufferType::Vertex;
         ib.usage     = render::BufferUsage::Dynamic;
         ib.sizeBytes = kMaxInstances * sizeof(InstanceData);
         instanceBuffer = device.createBuffer(ib);
         if (instancedPipeline == render::kInvalidHandle || instancedTwoSidedPipeline == render::kInvalidHandle ||
+            shadowInstancedPipeline == render::kInvalidHandle ||
             instanceBuffer == render::kInvalidHandle)
             return false;
 
@@ -977,6 +1019,43 @@ void Renderer3D::end()
                 if (c.style.castShadow && !isTranslucent(c.style))
                     s.ensureBounds(c);
 
+        std::vector<const Command*> singles;
+        std::vector<std::vector<const Command*>> shadowGroups;
+        {
+            std::vector<Command*> casters;
+            for (Command& c : s.commands)
+            {
+                if (!c.style.castShadow || isTranslucent(c.style))
+                    continue;
+                if (Impl::instanceable(c))
+                    casters.push_back(&c);
+                else
+                    singles.push_back(&c);
+            }
+            std::stable_sort(casters.begin(), casters.end(), [](const Command* a, const Command* b) {
+                return std::make_tuple(a->mesh, a->first, a->count) < std::make_tuple(b->mesh, b->first, b->count);
+            });
+            for (std::size_t begin = 0; begin < casters.size();)
+            {
+                std::size_t end = begin + 1;
+                while (end < casters.size() && casters[end]->mesh == casters[begin]->mesh &&
+                       casters[end]->first == casters[begin]->first && casters[end]->count == casters[begin]->count)
+                    ++end;
+                if (end - begin >= 2)
+                {
+                    shadowGroups.emplace_back(casters.begin() + static_cast<std::ptrdiff_t>(begin),
+                                              casters.begin() + static_cast<std::ptrdiff_t>(end));
+                }
+                else
+                {
+                    singles.push_back(casters[begin]);
+                }
+                begin = end;
+            }
+            for (Command* c : casters)
+                s.ensureBounds(*c);
+        }
+
         if (device.beginShadowPass())
         {
             for (int i = 0; i < kMaxTiles; ++i)
@@ -1001,18 +1080,28 @@ void Renderer3D::end()
                     }
                 }
 
-                for (const Command& c : s.commands)
+                const auto reaches = [&](const Command& c) {
+                    if (i == 0)
+                        return true;
+                    const math::Vec3 d = c.center - lightCenter;
+                    const float reach  = lightRange + c.radius;
+                    return d.dot(d) <= reach * reach;
+                };
+                for (const Command* c : singles)
+                    if (reaches(*c))
+                        s.emitDepth(*c, tiles[i].viewProj);
+                s.flush();
+                for (const auto& group : shadowGroups)
                 {
-                    if (!c.style.castShadow || isTranslucent(c.style))
+                    std::vector<const Command*> visibleMembers;
+                    for (const Command* c : group)
+                        if (reaches(*c))
+                            visibleMembers.push_back(c);
+                    if (visibleMembers.empty())
                         continue;
-                    if (i > 0)
-                    {
-                        const math::Vec3 d = c.center - lightCenter;
-                        const float reach  = lightRange + c.radius;
-                        if (d.dot(d) > reach * reach)
-                            continue;
-                    }
-                    s.emitDepth(c, tiles[i].viewProj);
+                    if (!s.drawInstancedShadow(visibleMembers, tiles[i].viewProj))
+                        for (const Command* c : visibleMembers)
+                            s.emitDepth(*c, tiles[i].viewProj);
                 }
                 s.flush();
             }

@@ -515,6 +515,62 @@ struct Loader
         return true;
     }
 
+    bool loadMorphAnimations()
+    {
+        const std::size_t targets = mesh->morphTargets.size();
+        const Array* list         = array(root, "animations");
+        if (targets == 0 || !list)
+            return true;
+        for (std::size_t ai = 0; ai < list->size(); ++ai)
+        {
+            const Value& anim     = (*list)[ai];
+            const Array* samplers = array(anim, "samplers");
+            const Array* channels = array(anim, "channels");
+            if (!samplers || !channels)
+                continue;
+            for (const Value& ch : *channels)
+            {
+                const Value* target    = ch.find("target");
+                const Value* pathValue = target ? target->find("path") : nullptr;
+                const auto* pathText   = pathValue ? std::get_if<std::string>(&pathValue->v) : nullptr;
+                if (!pathText || *pathText != "weights")
+                    continue;
+                const long samplerIndex = static_cast<long>(number(ch.find("sampler"), -1));
+                if (samplerIndex < 0 || static_cast<std::size_t>(samplerIndex) >= samplers->size())
+                    continue;
+                const Value& sampler = (*samplers)[static_cast<std::size_t>(samplerIndex)];
+                std::string interpolation = "LINEAR";
+                if (const Value* iv = sampler.find("interpolation"))
+                    if (const auto* str = std::get_if<std::string>(&iv->v))
+                        interpolation = *str;
+                Accessor input, output;
+                if (!accessor(static_cast<long>(number(sampler.find("input"), -1)), input) ||
+                    !accessor(static_cast<long>(number(sampler.find("output"), -1)), output))
+                    return false;
+                const bool cubic          = interpolation == "CUBICSPLINE";
+                const std::size_t perKey  = cubic ? 3 : 1;
+                if (input.components != 1 || output.components != 1 || output.count < input.count * targets * perKey)
+                    continue;
+                MorphClip clip;
+                clip.name = "animacion_" + std::to_string(ai);
+                if (const Value* nm = anim.find("name"))
+                    if (const auto* str = std::get_if<std::string>(&nm->v); str && !str->empty())
+                        clip.name = *str;
+                clip.step = interpolation == "STEP";
+                for (std::size_t k = 0; k < input.count; ++k)
+                {
+                    clip.times.push_back(component(input, k, 0));
+                    for (std::size_t t = 0; t < targets; ++t)
+                        clip.values.push_back(component(output, (k * perKey + (cubic ? 1 : 0)) * targets + t, 0));
+                }
+                clip.duration = clip.times.empty() ? 0.f : clip.times.back();
+                mesh->morphClips.push_back(std::move(clip));
+                break;
+            }
+        }
+        return true;
+    }
+
     bool loadAnimations()
     {
         const Array* list = array(root, "animations");
@@ -1021,6 +1077,8 @@ struct Loader
             mesh->texturePath = mesh->parts.front().texturePath;
             mesh->material    = mesh->parts.front().material;
         }
+        if (!loadMorphAnimations())
+            return false;
         if (skin)
         {
             skinVerts.resize(mesh->vertices.size());
