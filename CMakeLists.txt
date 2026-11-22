@@ -137,7 +137,7 @@ if(NOT WIN32)
     FetchContent_MakeAvailable(glfw stb miniaudio)
     target_sources(engine PRIVATE src/internal/TrueType.cpp src/audio/MiniaudioImpl.cpp)
     target_include_directories(engine PRIVATE ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR})
-    target_link_libraries(engine PUBLIC $<BUILD_INTERFACE:glfw> $<INSTALL_INTERFACE:glfw> ${CMAKE_DL_LIBS})
+    target_link_libraries(engine PUBLIC $<BUILD_INTERFACE:glfw> $<INSTALL_INTERFACE:-lglfw> ${CMAKE_DL_LIBS})
 endif()
 
 option(ZIO_ENABLE_ZIO_LANGUAGE "Registra el lenguaje propio de Zio (src/scripting/ZioLanguage.cpp)" OFF)
