@@ -52,6 +52,9 @@ public:
     int bloomPixel[4]      = {};
     int exposurePixel[4]   = {};
     int bloomEdge          = 0;
+    std::size_t skinned    = 0;
+    int skinMoved          = 0;
+    int skinOrigin         = 0;
     bool fullscreenSet     = false;
     bool fullscreenMode    = false;
     bool restoredMode      = false;
@@ -73,13 +76,14 @@ protected:
 
     void onRender(float) override
     {
-        if (frames != 1 && frames != 2 && frames != 3 && frames != 4 && frames != 5 && frames != 6 && frames != 7)
+        if (frames != 18 && frames != 1 && frames != 2 && frames != 3 && frames != 4 && frames != 5 && frames != 6 && frames != 7)
             return;
         const bool second = frames == 6;
         const bool textured = frames == 7;
         const bool shadowed = frames == 4;
         const bool skyFrame = frames == 3;
         const bool postFrame = frames == 1 || frames == 2;
+        const bool skinFrame = frames == 18;
         auto& renderer = scene3d::Renderer3D::instance();
         if (!renderer.ensureInitialized())
             return;
@@ -87,11 +91,40 @@ protected:
         camera.position = {0.f, 0.f, 5.f};
         camera.target   = {0.f, 0.f, 0.f};
         scene3d::Light light;
-        light.shadows = shadowed;
+        light.shadows = shadowed || skinFrame;
         const auto cube = scene3d::Mesh::cube(1.f);
         auto& device = render::Device::instance();
         device.beginFrame(render::ClearColor{0.f, 0.f, 0.f, 1.f});
         renderer.begin(camera, light, 640, 360);
+        if (skinFrame)
+        {
+            auto quad = std::make_shared<scene3d::Mesh>();
+            const math::Vec3 corners[6] = {{-1.f, -1.f, 0.f}, {1.f, -1.f, 0.f}, {1.f, 1.f, 0.f},
+                                           {-1.f, -1.f, 0.f}, {1.f, 1.f, 0.f},  {-1.f, 1.f, 0.f}};
+            for (const math::Vec3& corner : corners)
+                quad->vertices.push_back({corner, {0.f, 0.f, 1.f}, 0.f, 0.f});
+            quad->skin = std::make_shared<scene3d::Skin>();
+            scene3d::SkinJoint joint;
+            quad->skin->joints.push_back(joint);
+            scene3d::VertexSkin weights;
+            weights.weights[0] = 1.f;
+            quad->skin->vertices.assign(6, weights);
+            std::vector<math::Mat4> bones = {math::Mat4::translation({3.f, 0.f, 0.f})};
+            scene3d::MeshStyle style;
+            style.bones = &bones;
+            renderer.begin(camera, light, 640, 360);
+            renderer.drawMesh(*quad, math::Mat4::identity(), style);
+            renderer.end();
+            skinned = renderer.skinnedLastFrame();
+            std::uint8_t moved[4] = {};
+            std::uint8_t origin[4] = {};
+            device.readBackPixel(508, 180, moved);
+            device.readBackPixel(320, 180, origin);
+            device.endFrame();
+            skinMoved  = moved[0] + moved[1] + moved[2];
+            skinOrigin = origin[0] + origin[1] + origin[2];
+            return;
+        }
         if (postFrame)
         {
             scene3d::Environment env;
@@ -262,6 +295,8 @@ int main()
           "el postproceso baja la exposicion de la imagen");
     check(app.drawn == 0 || app.bloomPixel[0] > 120, "el postproceso con bloom dibuja la escena");
     check(app.drawn == 0 || app.bloomEdge > 0, "el bloom hace brillar el borde de los objetos claros");
+    check(app.drawn == 0 || app.skinned == 1, "una malla con huesos se dibuja con el esqueleto en la GPU");
+    check(app.drawn == 0 || (app.skinMoved > 120 && app.skinOrigin < 30), "los huesos de la GPU mueven la malla");
     check(app.fullscreenSet && app.fullscreenMode && app.fullscreenWidth > 640, "la ventana pasa a pantalla completa");
     check(app.restoredMode && app.restoredWidth == 640, "la ventana vuelve a modo ventana con su tamano");
     check(app.drawn == 0 || app.culled == 2, "el descarte quita los objetos fuera de la camara");

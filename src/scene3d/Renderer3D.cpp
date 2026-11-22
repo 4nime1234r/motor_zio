@@ -14,6 +14,8 @@
 
 #include "mesh3d_frag.spv.h"
 #include "mesh3d_inst_vert.spv.h"
+#include "mesh3d_skin_vert.spv.h"
+#include "shadow_skin_vert.spv.h"
 #include "mesh3d_vert.spv.h"
 #include "shadow_frag.spv.h"
 #include "shadow_inst_vert.spv.h"
@@ -98,6 +100,12 @@ struct MeshBuffer
     render::BufferHandle handle = render::kInvalidHandle;
     std::size_t vertexCount     = 0;
 };
+
+std::unordered_map<std::uint64_t, MeshBuffer>& skinBuffers()
+{
+    static auto* buffers = new std::unordered_map<std::uint64_t, MeshBuffer>();
+    return *buffers;
+}
 
 std::unordered_map<std::uint64_t, MeshBuffer>& meshBuffers()
 {
@@ -230,6 +238,11 @@ struct Renderer3D::Impl
     render::PipelineHandle instancedTwoSidedPipeline  = render::kInvalidHandle;
     render::PipelineHandle shadowInstancedPipeline    = render::kInvalidHandle;
     render::PipelineHandle skyPipeline                = render::kInvalidHandle;
+    render::PipelineHandle skinPipelines[2][2]        = {};
+    render::PipelineHandle shadowSkinPipeline         = render::kInvalidHandle;
+    bool skinReady                                    = false;
+    std::size_t skinnedDrawn                          = 0;
+    std::vector<std::unique_ptr<Mesh>> frameMeshes;
     render::PipelineHandle brightPipeline             = render::kInvalidHandle;
     render::PipelineHandle blurPipeline               = render::kInvalidHandle;
     render::PipelineHandle compositePipeline          = render::kInvalidHandle;
@@ -373,7 +386,8 @@ struct Renderer3D::Impl
         return render::Device::instance().createPipeline(desc);
     }
 
-    render::PipelineHandle makeInstancedPipeline(bool cullBack, bool shadow = false)
+    render::PipelineHandle makeInstancedPipeline(bool cullBack, bool shadow = false, bool skin = false,
+                                                 bool translucent = false)
     {
         render::VertexAttribute attrs[] = {
             {"POSITION", 0, render::VertexFormat::Float3, offsetof(Vertex3D, position)},
@@ -393,9 +407,23 @@ struct Renderer3D::Impl
             {"TEXCOORD", 9, render::VertexFormat::Float4, offsetof(InstanceData, emissive)},
             {"TEXCOORD", 10, render::VertexFormat::Float4, offsetof(InstanceData, flagsUv)},
         };
+        render::VertexAttribute skinAttrs[] = {
+            {"TEXCOORD", 11, render::VertexFormat::UShort4, offsetof(VertexSkin, joints)},
+            {"TEXCOORD", 12, render::VertexFormat::UShort4, offsetof(VertexSkin, joints) + 8},
+            {"TEXCOORD", 13, render::VertexFormat::Float4, offsetof(VertexSkin, weights)},
+            {"TEXCOORD", 14, render::VertexFormat::Float4, offsetof(VertexSkin, weights) + 16},
+        };
         render::PipelineDesc desc{};
-        desc.vertexShaderSpirv       = shadow ? std::span<const std::uint32_t>(zio_shadow_inst_vert_spirv)
-                                              : std::span<const std::uint32_t>(zio_mesh3d_inst_vert_spirv);
+        if (skin)
+        {
+            desc.skinAttributes     = skinAttrs;
+            desc.skinAttributeCount = 4;
+            desc.skinStrideBytes    = sizeof(VertexSkin);
+        }
+        desc.vertexShaderSpirv       = skin ? (shadow ? std::span<const std::uint32_t>(zio_shadow_skin_vert_spirv)
+                                                      : std::span<const std::uint32_t>(zio_mesh3d_skin_vert_spirv))
+                                            : (shadow ? std::span<const std::uint32_t>(zio_shadow_inst_vert_spirv)
+                                                      : std::span<const std::uint32_t>(zio_mesh3d_inst_vert_spirv));
         desc.pixelShaderSpirv        = shadow ? std::span<const std::uint32_t>(zio_shadow_frag_spirv)
                                               : std::span<const std::uint32_t>(zio_mesh3d_frag_spirv);
         desc.shadowPass              = shadow;
@@ -406,7 +434,7 @@ struct Renderer3D::Impl
         desc.instanceAttributeCount  = 10;
         desc.instanceStrideBytes     = sizeof(InstanceData);
         desc.depthTest               = true;
-        desc.depthWrite              = true;
+        desc.depthWrite              = !translucent;
         desc.cullBack                = cullBack;
         return render::Device::instance().createPipeline(desc);
     }
@@ -435,6 +463,8 @@ struct Renderer3D::Impl
 
     static bool instanceable(const Command& cmd)
     {
+        if (cmd.style.bones)
+            return false;
         if (cmd.mesh->dynamic || cmd.count == 0 || cmd.count % 3 != 0 || cmd.style.alphaMode == AlphaMode::Blend)
             return false;
         if (cmd.first + cmd.count > cmd.mesh->vertices.size())
@@ -495,6 +525,113 @@ struct Renderer3D::Impl
         out.flagsUv[1]      = st.uvScale.x;
         out.flagsUv[2]      = st.uvScale.y;
         out.flagsUv[3]      = 0.f;
+    }
+
+    render::BufferHandle skinBuffer(const Mesh& mesh)
+    {
+        if (!mesh.skin || mesh.skin->vertices.size() != mesh.vertices.size())
+            return render::kInvalidHandle;
+        if (mesh.gpu.value == 0)
+            return render::kInvalidHandle;
+        auto& buffers = skinBuffers();
+        auto& entry   = buffers[mesh.gpu.value];
+        auto& device  = render::Device::instance();
+        if (entry.handle != render::kInvalidHandle && entry.vertexCount == mesh.vertices.size())
+            return entry.handle;
+        if (entry.handle != render::kInvalidHandle)
+            device.destroyBuffer(entry.handle);
+        render::BufferDesc desc{};
+        desc.type      = render::BufferType::Vertex;
+        desc.usage     = render::BufferUsage::Immutable;
+        desc.data      = mesh.skin->vertices.data();
+        desc.sizeBytes = mesh.skin->vertices.size() * sizeof(VertexSkin);
+        entry.handle      = device.createBuffer(desc);
+        entry.vertexCount = mesh.vertices.size();
+        return entry.handle;
+    }
+
+    bool uploadSkeleton(const Command& cmd, std::uint32_t& offset)
+    {
+        const auto& bones = *cmd.style.bones;
+        if (bones.empty() || bones.size() > render::Device::kMaxBones)
+            return false;
+        float packed[render::Device::kMaxBones * 16];
+        for (std::size_t j = 0; j < bones.size(); ++j)
+            for (int r = 0; r < 4; ++r)
+                for (int c = 0; c < 4; ++c)
+                    packed[j * 16 + static_cast<std::size_t>(c) * 4 + static_cast<std::size_t>(r)] = bones[j].m[r][c];
+        return render::Device::instance().uploadBones(packed, static_cast<std::uint32_t>(bones.size() * 64), offset);
+    }
+
+    Command softwareSkinned(const Command& cmd)
+    {
+        auto posed     = std::make_unique<Mesh>();
+        posed->dynamic = true;
+        cmd.mesh->skin->apply(*cmd.mesh, *cmd.style.bones, *posed);
+        Command copy      = cmd;
+        copy.mesh         = posed.get();
+        copy.style.bones  = nullptr;
+        copy.boundsReady  = false;
+        copy.boundsValid  = false;
+        frameMeshes.push_back(std::move(posed));
+        return copy;
+    }
+
+    bool drawSkinned(const Command& cmd, bool translucent)
+    {
+        auto& device                  = render::Device::instance();
+        const render::BufferHandle vb = meshBuffer(*cmd.mesh);
+        const render::BufferHandle sb = skinBuffer(*cmd.mesh);
+        std::uint32_t offset          = 0;
+        if (!skinReady || vb == render::kInvalidHandle || sb == render::kInvalidHandle || !uploadSkeleton(cmd, offset))
+            return false;
+        flush();
+        device.bindPipeline(skinPipelines[cmd.style.doubleSided ? 1 : 0][translucent ? 1 : 0]);
+        device.bindVertexBuffer(vb, sizeof(Vertex3D));
+        device.bindSkinBuffer(sb);
+        device.bindTexture(cmd.style.texture == render::kInvalidHandle ? whiteTexture : cmd.style.texture, 0);
+        const render::TextureHandle material[4] = {cmd.style.normalTexture, cmd.style.metallicRoughnessTexture,
+                                                   cmd.style.emissiveTexture, cmd.style.occlusionTexture};
+        device.bindMaterialTextures(material, offset);
+        device.bindShadowMap();
+        InstanceData data;
+        fillInstance(cmd, data);
+        if (!device.updateBuffer(instanceBuffer, &data, sizeof(data)))
+            return false;
+        device.bindInstanceBuffer(instanceBuffer);
+        device.draw(static_cast<std::uint32_t>(cmd.count), static_cast<std::uint32_t>(cmd.first), 1);
+        currentPipeline = render::kInvalidHandle;
+        ++skinnedDrawn;
+        return true;
+    }
+
+    bool drawSkinnedShadow(const Command& cmd, const math::Mat4& lightMatrix)
+    {
+        auto& device                  = render::Device::instance();
+        const render::BufferHandle vb = meshBuffer(*cmd.mesh);
+        const render::BufferHandle sb = skinBuffer(*cmd.mesh);
+        std::uint32_t offset          = 0;
+        if (!skinReady || vb == render::kInvalidHandle || sb == render::kInvalidHandle || !uploadSkeleton(cmd, offset))
+            return false;
+        flush();
+        device.bindPipeline(shadowSkinPipeline);
+        device.bindVertexBuffer(vb, sizeof(Vertex3D));
+        device.bindSkinBuffer(sb);
+        const render::TextureHandle none[4] = {};
+        device.bindMaterialTextures(none, offset);
+        float matrix[16];
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                matrix[c * 4 + r] = lightMatrix.m[r][c];
+        device.setPushConstants(matrix, sizeof(matrix));
+        InstanceData data;
+        fillInstance(cmd, data);
+        if (!device.updateBuffer(instanceBuffer, &data, sizeof(data)))
+            return false;
+        device.bindInstanceBuffer(instanceBuffer);
+        device.draw(static_cast<std::uint32_t>(cmd.count), static_cast<std::uint32_t>(cmd.first), 1);
+        currentPipeline = render::kInvalidHandle;
+        return true;
     }
 
     bool drawInstancedShadow(const std::vector<const Command*>& cmds, const math::Mat4& lightMatrix)
@@ -600,6 +737,14 @@ struct Renderer3D::Impl
         instancedPipeline         = makeInstancedPipeline(true);
         instancedTwoSidedPipeline = makeInstancedPipeline(false);
         shadowInstancedPipeline   = makeInstancedPipeline(false, true);
+        skinPipelines[0][0]       = makeInstancedPipeline(true, false, true, false);
+        skinPipelines[1][0]       = makeInstancedPipeline(false, false, true, false);
+        skinPipelines[0][1]       = makeInstancedPipeline(true, false, true, true);
+        skinPipelines[1][1]       = makeInstancedPipeline(false, false, true, true);
+        shadowSkinPipeline        = makeInstancedPipeline(false, true, true, false);
+        skinReady = skinPipelines[0][0] != render::kInvalidHandle && skinPipelines[1][0] != render::kInvalidHandle &&
+                    skinPipelines[0][1] != render::kInvalidHandle && skinPipelines[1][1] != render::kInvalidHandle &&
+                    shadowSkinPipeline != render::kInvalidHandle;
         {
             render::PipelineDesc sky{};
             sky.vertexShaderSpirv = zio_sky_vert_spirv;
@@ -922,6 +1067,8 @@ struct Renderer3D::Impl
 
     bool visible(Command& cmd)
     {
+        if (cmd.style.bones)
+            return true;
         ensureBounds(cmd);
         const bool seen = !cmd.boundsValid || frustum.sees(cmd.center, cmd.radius);
         if (!seen)
@@ -992,6 +1139,7 @@ void Renderer3D::begin(const Camera& camera, const Light& light, std::uint32_t v
     impl_->commands.clear();
     impl_->lines.clear();
     impl_->pending.clear();
+    impl_->frameMeshes.clear();
 }
 
 void Renderer3D::setEnvironment(const Environment& environment)
@@ -1034,6 +1182,16 @@ void Renderer3D::drawMeshPart(const Mesh& mesh, std::size_t firstVertex, std::si
     impl_->commands.push_back(Command{&mesh, world, style, d.dot(d), firstVertex, vertexCount});
 }
 
+std::size_t Renderer3D::skinnedLastFrame() const
+{
+    return impl_->skinnedDrawn;
+}
+
+bool Renderer3D::gpuSkinningAvailable() const
+{
+    return impl_->initialized && impl_->skinReady;
+}
+
 std::size_t Renderer3D::instancedLastFrame() const
 {
     return impl_->instanced;
@@ -1042,12 +1200,15 @@ std::size_t Renderer3D::instancedLastFrame() const
 void Renderer3D::releaseMeshBuffers(std::uint64_t id)
 {
     auto& buffers = meshBuffers();
-    const auto it = buffers.find(id);
-    if (it == buffers.end())
-        return;
-    if (it->second.handle != render::kInvalidHandle && render::Device::instance().isInitialized())
-        render::Device::instance().destroyBuffer(it->second.handle);
-    buffers.erase(it);
+    for (auto* map : {&buffers, &skinBuffers()})
+    {
+        const auto it = map->find(id);
+        if (it == map->end())
+            continue;
+        if (it->second.handle != render::kInvalidHandle && render::Device::instance().isInitialized())
+            render::Device::instance().destroyBuffer(it->second.handle);
+        map->erase(it);
+    }
 }
 
 GpuId::~GpuId()
@@ -1232,8 +1393,17 @@ void Renderer3D::end()
                     return d.dot(d) <= reach * reach;
                 };
                 for (const Command* c : singles)
-                    if (reaches(*c))
+                {
+                    if (!c->style.bones && !reaches(*c))
+                        continue;
+                    if (c->style.bones)
+                    {
+                        if (!s.drawSkinnedShadow(*c, tiles[i].viewProj))
+                            s.emitDepth(s.softwareSkinned(*c), tiles[i].viewProj);
+                    }
+                    else
                         s.emitDepth(*c, tiles[i].viewProj);
+                }
                 s.flush();
                 for (const auto& group : shadowGroups)
                 {
@@ -1384,6 +1554,7 @@ void Renderer3D::end()
     s.frustum.build(s.viewProj);
     s.culled    = 0;
     s.instanced = 0;
+    s.skinnedDrawn = 0;
     std::vector<Command*> candidates;
     for (Command& c : s.commands)
     {
@@ -1391,6 +1562,11 @@ void Renderer3D::end()
             continue;
         if (Impl::instanceable(c))
             candidates.push_back(&c);
+        else if (c.style.bones)
+        {
+            if (!s.drawSkinned(c, false))
+                s.emit(s.softwareSkinned(c), c.style.doubleSided ? s.opaqueTwoSided : s.opaquePipeline);
+        }
         else
             s.emit(c, c.style.doubleSided ? s.opaqueTwoSided : s.opaquePipeline);
     }
@@ -1419,7 +1595,15 @@ void Renderer3D::end()
     std::stable_sort(translucent.begin(), translucent.end(),
                      [](const Command* a, const Command* b) { return a->distanceSq > b->distanceSq; });
     for (const Command* c : translucent)
-        s.emit(*c, c->style.doubleSided ? s.translucentTwoSided : s.translucentPipeline);
+    {
+        if (c->style.bones)
+        {
+            if (!s.drawSkinned(*c, true))
+                s.emit(s.softwareSkinned(*c), c->style.doubleSided ? s.translucentTwoSided : s.translucentPipeline);
+        }
+        else
+            s.emit(*c, c->style.doubleSided ? s.translucentTwoSided : s.translucentPipeline);
+    }
     s.flush();
 
     s.emitLines(LineMode::Overlay);

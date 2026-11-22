@@ -41,7 +41,10 @@ public:
     void bindPipeline(PipelineHandle pipeline);
     void bindVertexBuffer(BufferHandle buffer, std::uint32_t strideBytes);
     void bindTexture(TextureHandle texture, std::uint32_t slot = 0);
-    void bindMaterialTextures(const TextureHandle textures[4]);
+    void bindMaterialTextures(const TextureHandle textures[4], std::uint32_t boneOffset = 0);
+    bool uploadBones(const void* data, std::uint32_t sizeBytes, std::uint32_t& outOffset);
+    void bindSkinBuffer(BufferHandle buffer);
+    static constexpr std::uint32_t kMaxBones = 128;
     void setPushConstants(const void* data, std::uint32_t sizeBytes);
     void bindInstanceBuffer(BufferHandle buffer);
     void draw(std::uint32_t vertexCount, std::uint32_t startVertex = 0, std::uint32_t instanceCount = 1);

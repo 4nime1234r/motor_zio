@@ -32,6 +32,8 @@ VkFormat toVkFormat(VertexFormat format)
         return VK_FORMAT_R32G32B32_SFLOAT;
     case VertexFormat::Float4:
         return VK_FORMAT_R32G32B32A32_SFLOAT;
+    case VertexFormat::UShort4:
+        return VK_FORMAT_R16G16B16A16_UINT;
     }
     return VK_FORMAT_UNDEFINED;
 }
@@ -185,6 +187,13 @@ struct Device::Impl
     static constexpr std::uint32_t kLayoutSets        = 4;
     static constexpr std::uint32_t kMaxMaterialSets   = 512;
     VkDescriptorSet cached_material_set               = VK_NULL_HANDLE;
+    std::uint32_t cached_bone_offset                  = 0xFFFFFFFFu;
+    static constexpr VkDeviceSize kBoneRing           = 1024 * 1024;
+    static constexpr VkDeviceSize kBoneRange          = 128 * 64;
+    VkBuffer boneBuffer                               = VK_NULL_HANDLE;
+    VkDeviceMemory boneMemory                         = VK_NULL_HANDLE;
+    void* boneMapped                                  = nullptr;
+    VkDeviceSize boneWriteOffset                      = 0;
 
     void resetBoundStateCache()
     {
@@ -193,6 +202,7 @@ struct Device::Impl
         cached_vertex_offset  = 0;
         cached_descriptor_set = VK_NULL_HANDLE;
         cached_material_set   = VK_NULL_HANDLE;
+        cached_bone_offset    = 0xFFFFFFFFu;
         shadowSetBound        = false;
     }
 
@@ -932,7 +942,7 @@ struct Device::Impl
         if (deviceProps.limits.maxBoundDescriptorSets < kLayoutSets)
             return false;
 
-        VkDescriptorSetLayoutBinding materialBindings[4]{};
+        VkDescriptorSetLayoutBinding materialBindings[5]{};
         for (std::uint32_t i = 0; i < 4; ++i)
         {
             materialBindings[i].binding         = i;
@@ -940,8 +950,12 @@ struct Device::Impl
             materialBindings[i].descriptorCount = 1;
             materialBindings[i].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
         }
+        materialBindings[4].binding         = 4;
+        materialBindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        materialBindings[4].descriptorCount = 1;
+        materialBindings[4].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT;
         VkDescriptorSetLayoutCreateInfo materialLayoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        materialLayoutInfo.bindingCount = 4;
+        materialLayoutInfo.bindingCount = 5;
         materialLayoutInfo.pBindings    = materialBindings;
         if (vkCreateDescriptorSetLayout(device, &materialLayoutInfo, nullptr, &materialSetLayout) != VK_SUCCESS)
             return false;
@@ -960,12 +974,14 @@ struct Device::Impl
         static constexpr std::uint32_t kMaxDescriptorSets = 4096;
         VkDescriptorPoolSize poolSizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxDescriptorSets},
                                              {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1}};
-        VkDescriptorPoolSize materialPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxMaterialSets * 4 + 4};
+        VkDescriptorPoolSize materialPoolSizes[2] = {
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxMaterialSets * 4 + 4},
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kMaxMaterialSets + 1}};
         VkDescriptorPoolCreateInfo materialPoolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         materialPoolInfo.flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
         materialPoolInfo.maxSets       = kMaxMaterialSets + 1;
-        materialPoolInfo.poolSizeCount = 1;
-        materialPoolInfo.pPoolSizes    = &materialPoolSize;
+        materialPoolInfo.poolSizeCount = 2;
+        materialPoolInfo.pPoolSizes    = materialPoolSizes;
         if (vkCreateDescriptorPool(device, &materialPoolInfo, nullptr, &materialPool) != VK_SUCCESS)
             return false;
 
@@ -989,6 +1005,13 @@ struct Device::Impl
                           uniformMemory))
             return false;
         if (vkMapMemory(device, uniformMemory, 0, kUniformRing, 0, &uniformMapped) != VK_SUCCESS)
+            return false;
+
+        if (!createBuffer(kBoneRing, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, boneBuffer,
+                          boneMemory))
+            return false;
+        if (vkMapMemory(device, boneMemory, 0, kBoneRing, 0, &boneMapped) != VK_SUCCESS)
             return false;
 
         VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -1160,7 +1183,8 @@ struct Device::Impl
         materialAlloc.pSetLayouts        = &materialSetLayout;
         if (vkAllocateDescriptorSets(device, &materialAlloc, &dummyMaterialSet) != VK_SUCCESS)
             return false;
-        VkWriteDescriptorSet materialWrites[4]{};
+        VkDescriptorBufferInfo boneInfo{boneBuffer, 0, kBoneRange};
+        VkWriteDescriptorSet materialWrites[5]{};
         for (std::uint32_t i = 0; i < 4; ++i)
         {
             materialWrites[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1170,7 +1194,13 @@ struct Device::Impl
             materialWrites[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             materialWrites[i].pImageInfo      = &imageDescInfo;
         }
-        vkUpdateDescriptorSets(device, 4, materialWrites, 0, nullptr);
+        materialWrites[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        materialWrites[4].dstSet          = dummyMaterialSet;
+        materialWrites[4].dstBinding      = 4;
+        materialWrites[4].descriptorCount = 1;
+        materialWrites[4].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        materialWrites[4].pBufferInfo     = &boneInfo;
+        vkUpdateDescriptorSets(device, 5, materialWrites, 0, nullptr);
         return true;
     }
 
@@ -1483,6 +1513,13 @@ void Device::shutdown()
         vkDestroyDescriptorSetLayout(impl_->device, impl_->descriptorSetLayout, nullptr);
     if (impl_->uniformSetLayout)
         vkDestroyDescriptorSetLayout(impl_->device, impl_->uniformSetLayout, nullptr);
+    if (impl_->boneMapped)
+        vkUnmapMemory(impl_->device, impl_->boneMemory);
+    if (impl_->boneBuffer)
+        vkDestroyBuffer(impl_->device, impl_->boneBuffer, nullptr);
+    if (impl_->boneMemory)
+        vkFreeMemory(impl_->device, impl_->boneMemory, nullptr);
+    impl_->boneMapped = nullptr;
     if (impl_->uniformMapped)
         vkUnmapMemory(impl_->device, impl_->uniformMemory);
     if (impl_->uniformBuffer)
@@ -1695,7 +1732,7 @@ PipelineHandle Device::createPipeline(const PipelineDesc& desc)
             {static_cast<std::uint32_t>(i), 0, toVkFormat(attr.format), attr.offsetBytes});
     }
 
-    VkVertexInputBindingDescription bindings[2]{};
+    VkVertexInputBindingDescription bindings[3]{};
     bindings[0] = binding;
     std::uint32_t bindingCount = 1;
     if (desc.instanceAttributeCount > 0)
@@ -1709,6 +1746,20 @@ PipelineHandle Device::createPipeline(const PipelineDesc& desc)
             const auto& attr = desc.instanceAttributes[i];
             attributes.push_back({static_cast<std::uint32_t>(desc.attributeCount + i), 1, toVkFormat(attr.format),
                                   attr.offsetBytes});
+        }
+    }
+
+    if (desc.skinAttributeCount > 0)
+    {
+        bindings[2].binding   = 2;
+        bindings[2].stride    = desc.skinStrideBytes;
+        bindings[2].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        bindingCount          = 3;
+        for (std::size_t i = 0; i < desc.skinAttributeCount; ++i)
+        {
+            const auto& attr = desc.skinAttributes[i];
+            attributes.push_back({static_cast<std::uint32_t>(desc.attributeCount + desc.instanceAttributeCount + i), 2,
+                                  toVkFormat(attr.format), attr.offsetBytes});
         }
     }
 
@@ -2017,6 +2068,7 @@ void Device::beginFrame(const ClearColor& clear)
         slot.currentOffset = 0;
     }
     impl_->uniformWriteOffset = 0;
+    impl_->boneWriteOffset    = 0;
 
     const VkResult acquireResult = vkAcquireNextImageKHR(impl_->device, impl_->swapchain, UINT64_MAX,
                                                           impl_->imageAvailable, VK_NULL_HANDLE,
@@ -2077,7 +2129,7 @@ void Device::bindTexture(TextureHandle handle, std::uint32_t slot)
     impl_->cached_descriptor_set = set;
 }
 
-void Device::bindMaterialTextures(const TextureHandle textures[4])
+void Device::bindMaterialTextures(const TextureHandle textures[4], std::uint32_t boneOffset)
 {
     if (!impl_->frameValid)
         return;
@@ -2113,7 +2165,8 @@ void Device::bindMaterialTextures(const TextureHandle textures[4])
             if (vkAllocateDescriptorSets(impl_->device, &alloc, &created) == VK_SUCCESS)
             {
                 VkDescriptorImageInfo infos[4]{};
-                VkWriteDescriptorSet writes[4]{};
+                VkDescriptorBufferInfo boneInfo{impl_->boneBuffer, 0, Impl::kBoneRange};
+                VkWriteDescriptorSet writes[5]{};
                 for (std::uint32_t i = 0; i < 4; ++i)
                 {
                     infos[i].sampler     = impl_->defaultSampler;
@@ -2132,7 +2185,13 @@ void Device::bindMaterialTextures(const TextureHandle textures[4])
                     writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
                     writes[i].pImageInfo      = &infos[i];
                 }
-                vkUpdateDescriptorSets(impl_->device, 4, writes, 0, nullptr);
+                writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[4].dstSet          = created;
+                writes[4].dstBinding      = 4;
+                writes[4].descriptorCount = 1;
+                writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+                writes[4].pBufferInfo     = &boneInfo;
+                vkUpdateDescriptorSets(impl_->device, 5, writes, 0, nullptr);
                 Impl::MaterialSet entry;
                 for (int i = 0; i < 4; ++i)
                     entry.textures[i] = textures[i];
@@ -2145,11 +2204,37 @@ void Device::bindMaterialTextures(const TextureHandle textures[4])
             set = impl_->dummyMaterialSet;
     }
 
-    if (impl_->cached_material_set == set)
+    if (impl_->cached_material_set == set && impl_->cached_bone_offset == boneOffset)
         return;
-    vkCmdBindDescriptorSets(impl_->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, impl_->pipelineLayout, 3, 1, &set, 0,
-                            nullptr);
+    vkCmdBindDescriptorSets(impl_->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, impl_->pipelineLayout, 3, 1, &set, 1,
+                            &boneOffset);
     impl_->cached_material_set = set;
+    impl_->cached_bone_offset  = boneOffset;
+}
+
+bool Device::uploadBones(const void* data, std::uint32_t sizeBytes, std::uint32_t& outOffset)
+{
+    if (!impl_->frameValid || !data || sizeBytes == 0 || sizeBytes > Impl::kBoneRange)
+        return false;
+    const VkDeviceSize align  = impl_->uniformAlignment;
+    const VkDeviceSize offset = (impl_->boneWriteOffset + align - 1) / align * align;
+    if (offset + Impl::kBoneRange > Impl::kBoneRing)
+        return false;
+    std::memcpy(static_cast<std::uint8_t*>(impl_->boneMapped) + offset, data, sizeBytes);
+    impl_->boneWriteOffset = offset + sizeBytes;
+    outOffset              = static_cast<std::uint32_t>(offset);
+    return true;
+}
+
+void Device::bindSkinBuffer(BufferHandle handle)
+{
+    if (!impl_->frameValid || handle == kInvalidHandle || handle > impl_->buffers.size())
+        return;
+    VkBuffer buffer = impl_->buffers[handle - 1].buffer;
+    if (!buffer)
+        return;
+    const VkDeviceSize offset = impl_->buffers[handle - 1].currentOffset;
+    vkCmdBindVertexBuffers(impl_->cmd, 2, 1, &buffer, &offset);
 }
 
 void Device::setPushConstants(const void* data, std::uint32_t sizeBytes)

@@ -39,6 +39,7 @@ enum class VertexFormat
     Float2,
     Float3,
     Float4,
+    UShort4,
 };
 
 struct VertexAttribute
@@ -59,6 +60,9 @@ struct PipelineDesc
     const VertexAttribute* instanceAttributes = nullptr;
     std::size_t instanceAttributeCount        = 0;
     std::uint32_t instanceStrideBytes         = 0;
+    const VertexAttribute* skinAttributes     = nullptr;
+    std::size_t skinAttributeCount            = 0;
+    std::uint32_t skinStrideBytes             = 0;
     bool depthTest = false;
     bool depthWrite = true;
     bool cullBack = false;

@@ -218,6 +218,9 @@ private:
     void pose();
 
     std::shared_ptr<Mesh> posed_;
+    bool posedDirty_ = false;
+    bool gpuSkinned() const;
+    void cpuSkin();
     std::string animName_;
     float animTime_    = 0.f;
     std::string prevName_;

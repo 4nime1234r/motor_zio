@@ -169,6 +169,10 @@ zio_add_spirv_shader(engine
 zio_add_spirv_shader(engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/shadow.frag shadow_frag.spv.h zio_shadow_frag_spirv)
 zio_add_spirv_shader(engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/mesh3d_skin.vert mesh3d_skin_vert.spv.h zio_mesh3d_skin_vert_spirv)
+zio_add_spirv_shader(engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/shadow_skin.vert shadow_skin_vert.spv.h zio_shadow_skin_vert_spirv)
+zio_add_spirv_shader(engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/post.vert post_vert.spv.h zio_post_vert_spirv)
 zio_add_spirv_shader(engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/bright.frag bright_frag.spv.h zio_bright_frag_spirv)

@@ -24,7 +24,7 @@ Zio es de uso libre, pero no se puede vender: puedes usarlo y modificarlo gratis
 - Cámaras y luces del archivo glTF y morph targets, con pesos fijos o animados desde el archivo.
 - Antialiasing MSAA (4 muestras por defecto), descarte de objetos fuera de la cámara y dibujo instanciado en GPU de mallas estáticas repetidas, también en las sombras.
 - Prefabs: escenas reutilizables dentro de otras.
-- Animación de huesos: varios esqueletos por modelo, hasta 8 huesos por vértice, interpolación lineal, por pasos y de curva cúbica, y transición suave entre animaciones. La animación en curso se guarda en la escena.
+- Animación de huesos aplicada en la GPU, con capas por hueso y una máquina de estados de animación (`AnimationGraph`): varios esqueletos por modelo, hasta 8 huesos por vértice, interpolación lineal, por pasos y de curva cúbica, y transición suave entre animaciones. La animación en curso se guarda en la escena.
 - Iluminación por píxel con luz direccional, luces puntuales y luces focales (hasta 8 por escena, con color, intensidad y alcance) y sombras reales con mapa de sombras suavizado en las tres.
 - Entorno de la escena: cielo degradado o panorama, niebla lineal o exponencial y postproceso (bloom, exposición, contraste, saturación y tinte), guardado en la escena.
 - Materiales transparentes ordenados correctamente.
@@ -206,7 +206,6 @@ La carpeta `projects/` contiene ejemplos completos, entre ellos `Prueba3D`, una 
 - El editor solo funciona en Windows. En Linux los juegos abren ventana y dibujan con Vulkan (X11 y Wayland). El texto usa las fuentes TrueType que haya instaladas, y los scripts compilados desde el editor siguen siendo solo de Windows.
 - No hay cielo ni iluminación por imagen: los metales reflejan solo un degradado ambiental y las luces de la escena.
 - Los cambios hechos a los nodos de dentro de un prefab instanciado no se guardan en la escena.
-- La animación de huesos se calcula en la CPU.
 
 ## Estructura
 

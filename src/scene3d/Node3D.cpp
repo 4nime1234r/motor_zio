@@ -582,7 +582,22 @@ void MeshNode::pose()
     if (!posed_)
         posed_ = std::make_shared<Mesh>();
     posed_->dynamic = true;
-    mesh_->skin->apply(morphed_ ? *morphed_ : *mesh_, matrices, *posed_);
+    posedDirty_     = true;
+}
+
+bool MeshNode::gpuSkinned() const
+{
+    return mesh_ && mesh_->skin && posed_ && !morphed_ && !skinMatrices_.empty() &&
+           skinMatrices_.size() == mesh_->skin->joints.size() && skinMatrices_.size() <= 128 &&
+           Renderer3D::instance().gpuSkinningAvailable();
+}
+
+void MeshNode::cpuSkin()
+{
+    if (!posed_ || !posedDirty_ || !mesh_ || !mesh_->skin)
+        return;
+    mesh_->skin->apply(morphed_ ? *morphed_ : *mesh_, skinMatrices_, *posed_);
+    posedDirty_ = false;
 }
 
 const std::string& MeshNode::morphTargetName(std::size_t index) const
@@ -750,7 +765,12 @@ void MeshNode::onDraw(Renderer3D& renderer)
     style.texture     = texture_ ? texture_->handle : render::kInvalidHandle;
     style.uvScale     = uvScale_;
     style.castShadow  = castShadow_;
-    const Mesh& drawn = posed_ ? *posed_ : (morphed_ ? *morphed_ : *mesh_);
+    const bool gpu = gpuSkinned();
+    if (posed_ && !gpu)
+        cpuSkin();
+    const Mesh& drawn = gpu ? *mesh_ : (posed_ ? *posed_ : (morphed_ ? *morphed_ : *mesh_));
+    if (gpu)
+        style.bones = &skinMatrices_;
     if (mesh_->parts.size() < 2 || partTextures_.size() != mesh_->parts.size())
     {
         if (!materialTextures_.empty())

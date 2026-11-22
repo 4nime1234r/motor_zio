@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "zio/core/Platform.h"
 #include "zio/math/Mat4.h"
@@ -110,6 +111,7 @@ struct MeshStyle
     float emissive[3]             = {0.f, 0.f, 0.f};
     float normalScale             = 1.f;
     float occlusionStrength       = 1.f;
+    const std::vector<math::Mat4>* bones = nullptr;
     AlphaMode alphaMode           = AlphaMode::Opaque;
     float alphaCutoff             = 0.5f;
     bool doubleSided              = false;
@@ -152,6 +154,8 @@ public:
     void end();
     std::size_t culledLastFrame() const;
     std::size_t instancedLastFrame() const;
+    bool gpuSkinningAvailable() const;
+    std::size_t skinnedLastFrame() const;
     static void releaseMeshBuffers(std::uint64_t id);
 
 private:
