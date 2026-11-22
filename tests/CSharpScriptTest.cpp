@@ -89,6 +89,11 @@ int main()
                 "        bala = Node.Create(Node, NodeKind.Mesh, \"bala\"); bala.SetMesh(\"cube\");\n"
                 "        var foco = Node.Create(Node, NodeKind.Light, \"foco\"); foco.SetLight(2f, 15f);\n"
                 "        cuerpo = Body.CreateSphere(BodyKind.Dynamic, new Vector3(0f, 10f, 0f), 0.5f);\n"
+                "        var par = Body.CreateSphere(BodyKind.Dynamic, new Vector3(3f, 10f, 0f), 0.5f);\n"
+                "        var zona = Body.CreateBox(BodyKind.Static, new Vector3(9f, 0f, 0f), new Vector3(1f, 1f, 1f));\n"
+                "        zona.SetFilter(1u, 0xFFFFFFFFu, true);\n"
+                "        var union = Joint.Create(JointKind.Distance, cuerpo, par, Vector3.Zero, default, 3f);\n"
+                "        if (union.IsValid) Log.Info(\"union creada\");\n"
                 "        Scenes.Load(\"assets/scenes/otra.zscene3d\");\n"
                 "        if (Audio.Play(\"no_existe.wav\").Handle == 0) Log.Info(\"sin sonido\");\n"
                 "        if (Node.FindChild(\"bala\") != null && Node.FindChild(\"nadie\") == null) Log.Info(\"busqueda ok\");\n"
@@ -159,6 +164,7 @@ int main()
     check(foco && near(foco->intensity(), 2.f) && near(foco->range(), 15.f), "el nodo de luz toma sus valores");
     const auto logLines = scripting::DotNetRuntime::takeLog();
     check(contains(logLines, "busqueda ok"), "FindChild encuentra un hijo y devuelve null si no existe");
+    check(contains(logLines, "union creada"), "un script crea una articulacion y un trigger de fisica");
     check(contains(logLines, "sin sonido"), "reproducir un sonido que no existe no rompe nada");
     check(scripting::DotNetRuntime::takeSceneRequest() == "assets/scenes/otra.zscene3d", "un script pide cargar una escena");
     check(scripting::DotNetRuntime::takeSceneRequest().empty(), "la peticion de escena se consume");

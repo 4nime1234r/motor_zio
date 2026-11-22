@@ -93,6 +93,11 @@ struct NativeApi
     void(__cdecl* setCategoryVolume)(int, float);
     void(__cdecl* loadScene)(const char*, int);
     void*(__cdecl* instantiate)(void*, const char*, int);
+    void(__cdecl* setBodyFilter)(unsigned, unsigned, unsigned, int);
+    unsigned(__cdecl* createJoint)(int, unsigned, unsigned, const float*, const float*, float);
+    void(__cdecl* destroyJoint)(unsigned);
+    int(__cdecl* triggerEventCount)();
+    int(__cdecl* getTriggerEvent)(int, unsigned*, unsigned*, int*);
 };
 
 scene3d::Node3D* asNode(void* node)
@@ -473,6 +478,50 @@ void __cdecl apiSetCategoryVolume(int category, float volume)
                                                        volume);
 }
 
+void __cdecl apiSetBodyFilter(unsigned body, unsigned layer, unsigned mask, int trigger)
+{
+    auto& world = physics3d::World3D::instance();
+    world.setLayer(body, layer, mask);
+    world.setTrigger(body, trigger != 0);
+}
+
+unsigned __cdecl apiCreateJoint(int type, unsigned a, unsigned b, const float* anchor, const float* axis, float length)
+{
+    physics3d::JointDesc desc;
+    desc.type = type == 0 ? physics3d::JointType::Distance
+                : type == 2 ? physics3d::JointType::Hinge
+                : type == 3 ? physics3d::JointType::Fixed
+                            : physics3d::JointType::Ball;
+    desc.a           = a;
+    desc.b           = b;
+    desc.worldAnchor = vec3(anchor);
+    desc.worldAxis   = vec3(axis);
+    desc.length      = length;
+    return physics3d::World3D::instance().createJoint(desc);
+}
+
+void __cdecl apiDestroyJoint(unsigned joint)
+{
+    physics3d::World3D::instance().destroyJoint(joint);
+}
+
+int __cdecl apiTriggerEventCount()
+{
+    return static_cast<int>(physics3d::World3D::instance().triggerEvents().size());
+}
+
+int __cdecl apiGetTriggerEvent(int index, unsigned* trigger, unsigned* other, int* entered)
+{
+    const auto& events = physics3d::World3D::instance().triggerEvents();
+    if (index < 0 || static_cast<std::size_t>(index) >= events.size())
+        return 0;
+    const auto& e = events[static_cast<std::size_t>(index)];
+    *trigger      = e.trigger;
+    *other        = e.other;
+    *entered      = e.entered ? 1 : 0;
+    return 1;
+}
+
 void* __cdecl apiInstantiate(void* parent, const char* path, int length)
 {
     if (!parent)
@@ -810,6 +859,11 @@ bool DotNetRuntime::start(const fs::path& workDir, std::string* error)
     impl_->api.setCategoryVolume = apiSetCategoryVolume;
     impl_->api.loadScene         = apiLoadScene;
     impl_->api.instantiate       = apiInstantiate;
+    impl_->api.setBodyFilter     = apiSetBodyFilter;
+    impl_->api.createJoint       = apiCreateJoint;
+    impl_->api.destroyJoint      = apiDestroyJoint;
+    impl_->api.triggerEventCount = apiTriggerEventCount;
+    impl_->api.getTriggerEvent   = apiGetTriggerEvent;
     impl_->initialize(&impl_->api);
 
     impl_->running = true;

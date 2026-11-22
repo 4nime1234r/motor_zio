@@ -1,5 +1,6 @@
 set(ZIO_TESTS
     Physics3DTest
+    Physics2DTest
     UITest
     DockTest
     WidgetsTest

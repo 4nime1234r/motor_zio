@@ -52,6 +52,52 @@ public readonly struct Contact
     }
 }
 
+public enum JointKind
+{
+    Distance = 0,
+    Ball = 1,
+    Hinge = 2,
+    Fixed = 3
+}
+
+public readonly struct TriggerEvent
+{
+    public readonly Body Trigger;
+    public readonly Body Other;
+    public readonly bool Entered;
+
+    internal TriggerEvent(Body trigger, Body other, bool entered)
+    {
+        Trigger = trigger;
+        Other = other;
+        Entered = entered;
+    }
+}
+
+public readonly unsafe struct Joint
+{
+    public readonly uint Handle;
+
+    internal Joint(uint handle)
+    {
+        Handle = handle;
+    }
+
+    public bool IsValid => Handle != 0;
+
+    public static Joint Create(JointKind kind, Body a, Body b, Vector3 anchor, Vector3 axis = default, float length = -1f)
+    {
+        float* at = stackalloc float[3] { anchor.X, anchor.Y, anchor.Z };
+        float* direction = stackalloc float[3] { axis.X, axis.Y, axis.Z };
+        return new Joint(Native.Api.createJoint((int)kind, a.Handle, b.Handle, at, direction, length));
+    }
+
+    public void Destroy()
+    {
+        Native.Api.destroyJoint(Handle);
+    }
+}
+
 public readonly unsafe struct Body : IEquatable<Body>
 {
     public readonly uint Handle;
@@ -80,6 +126,11 @@ public readonly unsafe struct Body : IEquatable<Body>
     public void Destroy()
     {
         Native.Api.destroyBody(Handle);
+    }
+
+    public void SetFilter(uint layer, uint mask, bool trigger = false)
+    {
+        Native.Api.setBodyFilter(Handle, layer, mask, trigger ? 1 : 0);
     }
 
     private Vector3 GetVector(int what)
@@ -201,6 +252,20 @@ public static unsafe class Physics
         }
         hit = new RayHit(new Body(body), result[0], new Vector3(result[1], result[2], result[3]), new Vector3(result[4], result[5], result[6]));
         return true;
+    }
+
+    public static int TriggerEventCount => Native.Api.triggerEventCount();
+
+    public static TriggerEvent GetTriggerEvent(int index)
+    {
+        uint trigger = 0;
+        uint other = 0;
+        int entered = 0;
+        if (Native.Api.getTriggerEvent(index, &trigger, &other, &entered) == 0)
+        {
+            return default;
+        }
+        return new TriggerEvent(new Body(trigger), new Body(other), entered != 0);
     }
 
     public static int ContactCount => Native.Api.contactCount();

@@ -28,6 +28,34 @@ struct BodyDesc
     Shape shape            = Circle{math::Vec2::zero(), 0.5f};
     float mass             = 1.f;
     float restitution      = 0.f;
+    std::uint32_t layer    = 1u;
+    std::uint32_t mask     = 0xFFFFFFFFu;
+    bool trigger           = false;
+};
+
+struct TriggerEvent
+{
+    BodyHandle trigger = kInvalidBodyHandle;
+    BodyHandle other   = kInvalidBodyHandle;
+    bool entered       = true;
+};
+
+using JointHandle                                = std::uint32_t;
+inline constexpr JointHandle kInvalidJointHandle = 0;
+
+enum class JointType : std::uint8_t
+{
+    Distance,
+    Weld,
+};
+
+struct JointDesc
+{
+    JointType type     = JointType::Distance;
+    BodyHandle a       = kInvalidBodyHandle;
+    BodyHandle b       = kInvalidBodyHandle;
+    float length       = -1.f;
+    float stiffness    = 1.f;
 };
 
 struct Contact
@@ -60,6 +88,16 @@ public:
     void setVelocity(BodyHandle handle, math::Vec2 velocity);
     math::Vec2 velocity(BodyHandle handle) const;
     void applyImpulse(BodyHandle handle, math::Vec2 impulse);
+
+    void setLayer(BodyHandle handle, std::uint32_t layer, std::uint32_t mask);
+    void setTrigger(BodyHandle handle, bool trigger);
+    bool isTrigger(BodyHandle handle) const;
+    const std::vector<TriggerEvent>& triggerEvents() const;
+    std::vector<BodyHandle> overlapping(BodyHandle trigger) const;
+
+    JointHandle createJoint(const JointDesc& desc);
+    void destroyJoint(JointHandle handle);
+    bool hasJoint(JointHandle handle) const;
 
     Shape worldShape(BodyHandle handle) const;
 

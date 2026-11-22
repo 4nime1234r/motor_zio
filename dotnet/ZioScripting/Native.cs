@@ -50,6 +50,11 @@ internal unsafe struct NativeApi
     public delegate* unmanaged<int, float, void> setCategoryVolume;
     public delegate* unmanaged<byte*, int, void> loadScene;
     public delegate* unmanaged<IntPtr, byte*, int, IntPtr> instantiate;
+    public delegate* unmanaged<uint, uint, uint, int, void> setBodyFilter;
+    public delegate* unmanaged<int, uint, uint, float*, float*, float, uint> createJoint;
+    public delegate* unmanaged<uint, void> destroyJoint;
+    public delegate* unmanaged<int> triggerEventCount;
+    public delegate* unmanaged<int, uint*, uint*, int*, int> getTriggerEvent;
 }
 
 internal static class Native

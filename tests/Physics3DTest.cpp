@@ -216,6 +216,145 @@ void handles()
 
 }
 
+void layersAndMasks()
+{
+    World3D world;
+    ground(world);
+    BodyDesc desc;
+    desc.position = {0.f, 2.f, 0.f};
+    desc.shape    = SphereShape{0.5f};
+    desc.layer    = 2u;
+    desc.mask     = 4u;
+    const BodyHandle ghost = world.createBody(desc);
+    run(world, 2.f);
+    check(world.position(ghost).y < -1.f, "una capa que no esta en la mascara del suelo lo atraviesa", world.position(ghost).y);
+
+    World3D second;
+    ground(second);
+    desc.mask = 0xFFFFFFFFu;
+    const BodyHandle solid = second.createBody(desc);
+    run(second, 2.f);
+    check(second.position(solid).y > 0.3f, "con la mascara abierta el cuerpo se apoya", second.position(solid).y);
+}
+
+void triggers()
+{
+    World3D world;
+    BodyDesc zone;
+    zone.type     = BodyType::Static;
+    zone.trigger  = true;
+    zone.position = {0.f, 0.f, 0.f};
+    zone.shape    = BoxShape{{2.f, 2.f, 2.f}};
+    const BodyHandle area = world.createBody(zone);
+
+    BodyDesc ball;
+    ball.position = {0.f, 5.f, 0.f};
+    ball.shape    = SphereShape{0.5f};
+    const BodyHandle body = world.createBody(ball);
+
+    bool entered = false, exited = false, passedThrough = false;
+    for (int i = 0; i < 240; ++i)
+    {
+        world.step(1.f / 60.f);
+        for (const TriggerEvent& e : world.triggerEvents())
+        {
+            if (e.trigger == area && e.other == body)
+                (e.entered ? entered : exited) = true;
+        }
+        if (entered && !exited && world.position(body).y < 0.f)
+            passedThrough = true;
+    }
+    check(entered, "un trigger avisa cuando entra un cuerpo");
+    check(exited, "un trigger avisa cuando sale");
+    check(passedThrough, "el trigger no frena al cuerpo", world.position(body).y);
+    check(world.isTrigger(area) && !world.isTrigger(body), "isTrigger distingue las zonas");
+}
+
+void joints()
+{
+    {
+        World3D world;
+        world.setGravity({0.f, -9.81f, 0.f});
+        BodyDesc anchor;
+        anchor.type     = BodyType::Static;
+        anchor.position = {0.f, 5.f, 0.f};
+        anchor.shape    = SphereShape{0.1f};
+        const BodyHandle pivot = world.createBody(anchor);
+        BodyDesc bob;
+        bob.position = {2.f, 5.f, 0.f};
+        bob.shape    = SphereShape{0.2f};
+        const BodyHandle weight = world.createBody(bob);
+        JointDesc joint;
+        joint.type        = JointType::Ball;
+        joint.a           = pivot;
+        joint.b           = weight;
+        joint.worldAnchor = {0.f, 5.f, 0.f};
+        check(world.createJoint(joint) != kInvalidJointHandle, "se crea una articulacion de bola");
+        float worst = 0.f;
+        for (int i = 0; i < 300; ++i)
+        {
+            world.step(1.f / 60.f);
+            worst = std::max(worst, std::fabs((world.position(weight) - world.position(pivot)).length() - 2.f));
+        }
+        check(worst < 0.15f, "un pendulo de bola mantiene su distancia", worst);
+        check(world.position(weight).y < 5.f - 0.5f || world.linearVelocity(weight).length() > 0.1f, "el pendulo se mueve");
+    }
+    {
+        World3D world;
+        BodyDesc anchor;
+        anchor.type     = BodyType::Static;
+        anchor.position = {0.f, 5.f, 0.f};
+        anchor.shape    = SphereShape{0.1f};
+        const BodyHandle top = world.createBody(anchor);
+        BodyDesc bob;
+        bob.position = {0.f, 3.f, 0.f};
+        bob.shape    = SphereShape{0.2f};
+        const BodyHandle weight = world.createBody(bob);
+        JointDesc rod;
+        rod.type        = JointType::Distance;
+        rod.a           = top;
+        rod.b           = weight;
+        rod.worldAnchor = {0.f, 4.f, 0.f};
+        rod.length      = 2.f;
+        const JointHandle handle = world.createJoint(rod);
+        run(world, 3.f);
+        const float distance = (world.position(weight) - world.position(top)).length();
+        check(std::fabs(distance - 2.f) < 0.2f, "una articulacion de distancia mantiene el largo", distance);
+        world.destroyJoint(handle);
+        check(!world.hasJoint(handle), "destroyJoint la elimina");
+        run(world, 1.f);
+        check(world.position(weight).y < 2.5f, "sin la articulacion el cuerpo cae libre", world.position(weight).y);
+    }
+    {
+        World3D world;
+        BodyDesc anchor;
+        anchor.type     = BodyType::Static;
+        anchor.position = {0.f, 5.f, 0.f};
+        anchor.shape    = SphereShape{0.1f};
+        const BodyHandle wall = world.createBody(anchor);
+        BodyDesc door;
+        door.position = {1.f, 5.f, 0.f};
+        door.shape    = BoxShape{{1.f, 0.5f, 0.1f}};
+        const BodyHandle panel = world.createBody(door);
+        JointDesc hinge;
+        hinge.type        = JointType::Hinge;
+        hinge.a           = wall;
+        hinge.b           = panel;
+        hinge.worldAnchor = {0.f, 5.f, 0.f};
+        hinge.worldAxis   = {0.f, 1.f, 0.f};
+        world.createJoint(hinge);
+        world.applyImpulseAtPoint(panel, {0.f, 0.f, 1.f}, {2.f, 5.f, 0.f});
+        float maxY = 0.f;
+        for (int i = 0; i < 180; ++i)
+        {
+            world.step(1.f / 60.f);
+            maxY = std::max(maxY, std::fabs(world.position(panel).y - 5.f));
+        }
+        check(maxY < 1.5f, "una bisagra deja girar la puerta sobre su eje sin caerse", maxY);
+        check(std::fabs((world.position(panel) - world.position(wall)).length() - 1.f) < 0.25f, "la bisagra mantiene el anclaje");
+    }
+}
+
 int main()
 {
     sphereRests();
@@ -229,6 +368,9 @@ int main()
     raycasts();
     impulses();
     handles();
+    layersAndMasks();
+    triggers();
+    joints();
 
     std::printf("\n%s: %d fallos\n", failures == 0 ? "TODO BIEN" : "HAY ERRORES", failures);
     return failures == 0 ? 0 : 1;

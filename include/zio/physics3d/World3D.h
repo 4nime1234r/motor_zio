@@ -36,6 +36,39 @@ struct BodyDesc
     float friction               = 0.5f;
     float linearDamping          = 0.01f;
     float angularDamping         = 0.05f;
+    std::uint32_t layer          = 1u;
+    std::uint32_t mask           = 0xFFFFFFFFu;
+    bool trigger                 = false;
+};
+
+struct TriggerEvent
+{
+    BodyHandle trigger = kInvalidBodyHandle;
+    BodyHandle other   = kInvalidBodyHandle;
+    bool entered       = true;
+};
+
+using JointHandle                              = std::uint32_t;
+inline constexpr JointHandle kInvalidJointHandle = 0;
+
+enum class JointType : std::uint8_t
+{
+    Distance,
+    Ball,
+    Hinge,
+    Fixed,
+};
+
+struct JointDesc
+{
+    JointType type          = JointType::Ball;
+    BodyHandle a            = kInvalidBodyHandle;
+    BodyHandle b            = kInvalidBodyHandle;
+    math::Vec3 worldAnchor  = math::Vec3::zero();
+    math::Vec3 worldAxis    = {0.f, 1.f, 0.f};
+    float length            = -1.f;
+    float frequency         = 0.f;
+    float dampingRatio      = 0.7f;
 };
 
 struct Contact
@@ -87,6 +120,16 @@ public:
     void applyImpulseAtPoint(BodyHandle handle, math::Vec3 impulse, math::Vec3 worldPoint);
     void applyForce(BodyHandle handle, math::Vec3 force);
     void applyTorque(BodyHandle handle, math::Vec3 torque);
+
+    void setLayer(BodyHandle handle, std::uint32_t layer, std::uint32_t mask);
+    void setTrigger(BodyHandle handle, bool trigger);
+    bool isTrigger(BodyHandle handle) const;
+    const std::vector<TriggerEvent>& triggerEvents() const;
+    std::vector<BodyHandle> overlapping(BodyHandle trigger) const;
+
+    JointHandle createJoint(const JointDesc& desc);
+    void destroyJoint(JointHandle handle);
+    bool hasJoint(JointHandle handle) const;
 
     void step(float dt);
 

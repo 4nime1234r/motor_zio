@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
+#include <utility>
 
 #include "Collision3D.h"
 
@@ -38,6 +40,25 @@ struct Body
     float friction    = 0.f;
     float linearDamping  = 0.f;
     float angularDamping = 0.f;
+    std::uint32_t layer  = 1u;
+    std::uint32_t mask   = 0xFFFFFFFFu;
+    bool trigger         = false;
+};
+
+struct Joint
+{
+    bool alive = false;
+    JointType type = JointType::Ball;
+    int a = 0;
+    int b = 0;
+    Vec3 localA;
+    Vec3 localB;
+    Vec3 axisA;
+    Vec3 axisB;
+    Quaternion relative;
+    float length    = 0.f;
+    float frequency = 0.f;
+    float damping   = 0.7f;
 };
 
 struct Constraint
@@ -107,7 +128,118 @@ struct World3D::Impl
     std::vector<BodyHandle> freeList;
     std::vector<Contact> contacts;
     std::vector<Constraint> constraints;
+    std::vector<Joint> joints;
+    std::vector<JointHandle> freeJoints;
+    std::set<std::pair<BodyHandle, BodyHandle>> stepOverlaps;
+    std::set<std::pair<BodyHandle, BodyHandle>> previousOverlaps;
+    std::vector<TriggerEvent> events;
     float accumulator = 0.f;
+
+    static bool allowed(const Body& a, const Body& b)
+    {
+        return (a.layer & b.mask) != 0 && (b.layer & a.mask) != 0;
+    }
+
+    void solveJoints(float dt)
+    {
+        for (Joint& joint : joints)
+        {
+            if (!joint.alive)
+                continue;
+            Body& a = bodies[static_cast<std::size_t>(joint.a)];
+            Body& b = bodies[static_cast<std::size_t>(joint.b)];
+            if (!a.alive || !b.alive)
+                continue;
+
+            const Vec3 rA = a.rotation.rotate(joint.localA);
+            const Vec3 rB = b.rotation.rotate(joint.localB);
+            const Vec3 pA = a.position + rA;
+            const Vec3 pB = b.position + rB;
+            const float beta = 0.2f / dt;
+
+            if (joint.type == JointType::Distance)
+            {
+                Vec3 delta = pB - pA;
+                const float current = delta.length();
+                if (current < 1e-6f)
+                    continue;
+                const Vec3 n = delta * (1.f / current);
+                const float mass = effectiveMass(a, b, rA, rB, n);
+                if (mass <= 0.f)
+                    continue;
+                const float error = current - joint.length;
+                const float vrel  = (pointVelocity(b, rB) - pointVelocity(a, rA)).dot(n);
+                float lambda;
+                if (joint.frequency > 0.f)
+                {
+                    const float omega = 6.2831853f * joint.frequency;
+                    const float d     = 2.f / mass * joint.damping * omega;
+                    const float k     = 1.f / mass * omega * omega;
+                    const float gamma = 1.f / (dt * (d + dt * k));
+                    const float soft  = dt * k / (d + dt * k);
+                    const float massSoft = 1.f / (1.f / mass + gamma);
+                    lambda = -massSoft * (vrel + soft / dt * error);
+                }
+                else
+                {
+                    lambda = -mass * (vrel + beta * error);
+                }
+                applyImpulseAt(a, b, rA, rB, n * lambda);
+                continue;
+            }
+
+            const Vec3 axes[3] = {Vec3::unitX(), Vec3::unitY(), Vec3::unitZ()};
+            const Vec3 error   = pB - pA;
+            for (const Vec3& axis : axes)
+            {
+                const float mass = effectiveMass(a, b, rA, rB, axis);
+                if (mass <= 0.f)
+                    continue;
+                const float vrel   = (pointVelocity(b, rB) - pointVelocity(a, rA)).dot(axis);
+                const float lambda = -mass * (vrel + beta * error.dot(axis));
+                applyImpulseAt(a, b, rA, rB, axis * lambda);
+            }
+
+            if (joint.type == JointType::Hinge)
+            {
+                const Vec3 worldA = a.rotation.rotate(joint.axisA).normalized();
+                const Vec3 worldB = b.rotation.rotate(joint.axisB).normalized();
+                const Vec3 misalign = worldB.cross(worldA);
+                const Vec3 helper = std::fabs(worldA.x) < 0.9f ? Vec3::unitX() : Vec3::unitY();
+                const Vec3 p1     = worldA.cross(helper).normalized();
+                const Vec3 p2     = worldA.cross(p1);
+                for (const Vec3& p : {p1, p2})
+                {
+                    const float k = p.dot(inverseInertiaWorld(a, p)) + p.dot(inverseInertiaWorld(b, p));
+                    if (k <= 1e-9f)
+                        continue;
+                    const float wrel   = (b.angular - a.angular).dot(p);
+                    const float lambda = (beta * misalign.dot(p) - wrel) / k;
+                    a.angular = a.angular - inverseInertiaWorld(a, p * lambda);
+                    b.angular = b.angular + inverseInertiaWorld(b, p * lambda);
+                }
+            }
+            else if (joint.type == JointType::Fixed)
+            {
+                const Quaternion current = b.rotation * a.rotation.conjugate();
+                const Quaternion diff    = current * joint.relative.conjugate();
+                Vec3 err{diff.x, diff.y, diff.z};
+                if (diff.w < 0.f)
+                    err = err * -1.f;
+                err = err * 2.f;
+                for (const Vec3& axis : axes)
+                {
+                    const float k = axis.dot(inverseInertiaWorld(a, axis)) + axis.dot(inverseInertiaWorld(b, axis));
+                    if (k <= 1e-9f)
+                        continue;
+                    const float wrel   = (b.angular - a.angular).dot(axis);
+                    const float lambda = -(wrel + beta * err.dot(axis)) / k;
+                    a.angular = a.angular - inverseInertiaWorld(a, axis * lambda);
+                    b.angular = b.angular + inverseInertiaWorld(b, axis * lambda);
+                }
+            }
+        }
+    }
 
     Body* find(BodyHandle handle)
     {
@@ -144,9 +276,23 @@ struct World3D::Impl
                     continue;
                 Body& a = bodies[i];
                 Body& b = bodies[j];
-                if (a.invMass == 0.f && b.invMass == 0.f)
+                if (!allowed(a, b))
                     continue;
                 if (!boxes[i].overlaps(boxes[j]))
+                    continue;
+                if (a.trigger || b.trigger)
+                {
+                    detail::Manifold probe;
+                    if (detail::collide(a.shape, poseOf(a), b.shape, poseOf(b), probe))
+                    {
+                        if (a.trigger)
+                            stepOverlaps.insert({static_cast<BodyHandle>(i + 1), static_cast<BodyHandle>(j + 1)});
+                        else
+                            stepOverlaps.insert({static_cast<BodyHandle>(j + 1), static_cast<BodyHandle>(i + 1)});
+                    }
+                    continue;
+                }
+                if (a.invMass == 0.f && b.invMass == 0.f)
                     continue;
 
                 detail::Manifold manifold;
@@ -189,10 +335,13 @@ struct World3D::Impl
         }
     }
 
+    float stepDt = kFixedStep;
+
     void solve()
     {
         for (int iteration = 0; iteration < kIterations; ++iteration)
         {
+            solveJoints(stepDt);
             for (Constraint& c : constraints)
             {
                 Body& a = bodies[static_cast<std::size_t>(c.a)];
@@ -229,6 +378,7 @@ struct World3D::Impl
 
     void substep(float dt)
     {
+        stepDt = dt;
         for (Body& body : bodies)
         {
             if (!body.alive || body.type != BodyType::Dynamic)
@@ -289,6 +439,9 @@ BodyHandle World3D::createBody(const BodyDesc& desc)
     body.friction       = std::max(desc.friction, 0.f);
     body.linearDamping  = std::max(desc.linearDamping, 0.f);
     body.angularDamping = std::max(desc.angularDamping, 0.f);
+    body.layer          = desc.layer;
+    body.mask           = desc.mask;
+    body.trigger        = desc.trigger;
 
     if (desc.type == BodyType::Dynamic)
     {
@@ -325,6 +478,11 @@ void World3D::destroyBody(BodyHandle handle)
 {
     if (Body* body = impl_->find(handle))
     {
+        for (Joint& joint : impl_->joints)
+            if (joint.alive && (joint.a == static_cast<int>(handle - 1) || joint.b == static_cast<int>(handle - 1)))
+            {
+                joint = Joint{};
+            }
         *body = Body{};
         impl_->freeList.push_back(handle);
     }
@@ -341,6 +499,11 @@ void World3D::clear()
     impl_->freeList.clear();
     impl_->contacts.clear();
     impl_->constraints.clear();
+    impl_->joints.clear();
+    impl_->freeJoints.clear();
+    impl_->stepOverlaps.clear();
+    impl_->previousOverlaps.clear();
+    impl_->events.clear();
     impl_->accumulator = 0.f;
 }
 
@@ -442,6 +605,104 @@ void World3D::step(float dt)
         body.force  = Vec3::zero();
         body.torque = Vec3::zero();
     }
+
+    impl_->events.clear();
+    for (const auto& pair : impl_->stepOverlaps)
+        if (!impl_->previousOverlaps.contains(pair))
+            impl_->events.push_back({pair.first, pair.second, true});
+    for (const auto& pair : impl_->previousOverlaps)
+        if (!impl_->stepOverlaps.contains(pair))
+            impl_->events.push_back({pair.first, pair.second, false});
+    impl_->previousOverlaps = impl_->stepOverlaps;
+    impl_->stepOverlaps.clear();
+}
+
+void World3D::setLayer(BodyHandle handle, std::uint32_t layer, std::uint32_t mask)
+{
+    if (Body* body = impl_->find(handle))
+    {
+        body->layer = layer;
+        body->mask  = mask;
+    }
+}
+
+void World3D::setTrigger(BodyHandle handle, bool trigger)
+{
+    if (Body* body = impl_->find(handle))
+        body->trigger = trigger;
+}
+
+bool World3D::isTrigger(BodyHandle handle) const
+{
+    const Body* body = impl_->find(handle);
+    return body && body->trigger;
+}
+
+const std::vector<TriggerEvent>& World3D::triggerEvents() const
+{
+    return impl_->events;
+}
+
+std::vector<BodyHandle> World3D::overlapping(BodyHandle trigger) const
+{
+    std::vector<BodyHandle> out;
+    for (const auto& pair : impl_->previousOverlaps)
+        if (pair.first == trigger)
+            out.push_back(pair.second);
+    return out;
+}
+
+JointHandle World3D::createJoint(const JointDesc& desc)
+{
+    Body* a = impl_->find(desc.a);
+    Body* b = impl_->find(desc.b);
+    if (!a || !b || desc.a == desc.b)
+        return kInvalidJointHandle;
+
+    Joint joint;
+    joint.alive     = true;
+    joint.type      = desc.type;
+    joint.a         = static_cast<int>(desc.a - 1);
+    joint.b         = static_cast<int>(desc.b - 1);
+    joint.localA    = a->rotation.conjugate().rotate(desc.worldAnchor - a->position);
+    joint.localB    = b->rotation.conjugate().rotate(desc.worldAnchor - b->position);
+    const Vec3 axis = desc.worldAxis.length() > 1e-6f ? desc.worldAxis.normalized() : Vec3::unitY();
+    joint.axisA     = a->rotation.conjugate().rotate(axis);
+    joint.axisB     = b->rotation.conjugate().rotate(axis);
+    joint.relative  = b->rotation * a->rotation.conjugate();
+    if (desc.type == JointType::Distance)
+    {
+        joint.localA = Vec3::zero();
+        joint.localB = Vec3::zero();
+    }
+    const Vec3 anchorA = a->position + a->rotation.rotate(joint.localA);
+    const Vec3 anchorB = b->position + b->rotation.rotate(joint.localB);
+    joint.length       = desc.length >= 0.f ? desc.length : (anchorB - anchorA).length();
+    joint.frequency = std::max(desc.frequency, 0.f);
+    joint.damping   = std::max(desc.dampingRatio, 0.f);
+
+    if (!impl_->freeJoints.empty())
+    {
+        const JointHandle handle = impl_->freeJoints.back();
+        impl_->freeJoints.pop_back();
+        impl_->joints[handle - 1] = joint;
+        return handle;
+    }
+    impl_->joints.push_back(joint);
+    return static_cast<JointHandle>(impl_->joints.size());
+}
+
+void World3D::destroyJoint(JointHandle handle)
+{
+    if (handle == kInvalidJointHandle || handle > impl_->joints.size() || !impl_->joints[handle - 1].alive)
+        return;
+    impl_->joints[handle - 1] = Joint{};
+    impl_->freeJoints.push_back(handle);
+}
+
+bool World3D::hasJoint(JointHandle handle) const
+{
+    return handle != kInvalidJointHandle && handle <= impl_->joints.size() && impl_->joints[handle - 1].alive;
 }
 
 const std::vector<Contact>& World3D::contacts() const
