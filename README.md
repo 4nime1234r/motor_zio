@@ -58,7 +58,7 @@ Zio tiene dos lenguajes de scripts, C++ y C#, y un lugar preparado para añadir 
 
 ## Exportar, importar y jugar
 
-**Proyecto > Información del juego** guarda el nombre, el autor o dueño, la versión, el copyright, el sitio web y la licencia en el proyecto. **Proyecto > Exportar juego** crea el ejecutable del juego y su paquete `.zgame`, cifrado con XChaCha20-Poly1305 y Argon2id y, si quieres, firmado con tu clave de autor. **Proyecto > Importar juego** abre un paquete como proyecto editable cuando el autor lo permitió, y **Proyecto > Jugar un juego exportado** lo lanza.
+**Proyecto > Información del juego** guarda el nombre, el autor o dueño, la versión, el copyright, el sitio web y la licencia en el proyecto. **Proyecto > Exportar juego** crea el ejecutable del juego (con el icono y los datos de versión del juego) y su paquete `.zgame`, comprimido y cifrado con XChaCha20-Poly1305 y Argon2id y, si quieres, firmado con tu clave de autor. **Proyecto > Importar juego** abre un paquete como proyecto editable cuando el autor lo permitió, y **Proyecto > Jugar un juego exportado** lo lanza.
 
 El reproductor pide la contraseña, comprueba la firma y muestra el nombre y el autor del juego. En Linux se usa `zio_player juego.zgame`. El formato y lo que protege y no protege el cifrado están explicados en [docs/PAQUETES.md](docs/PAQUETES.md).
 

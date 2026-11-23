@@ -41,6 +41,8 @@ struct ImportRequest
 };
 
 std::string sanitizeExecutableName(const std::string& text);
+bool applyExecutableResources(const std::filesystem::path& executable, const std::filesystem::path& icon,
+                              const GameInfo& info, const std::string& fileName, std::string* error);
 std::filesystem::path signingKeyPath();
 std::filesystem::path editorExecutablePath();
 

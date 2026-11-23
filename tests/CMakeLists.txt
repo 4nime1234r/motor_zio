@@ -50,3 +50,14 @@ target_include_directories(ReleaseNotesTest PRIVATE ../tools/zio_editor/src ../s
 target_link_libraries(ReleaseNotesTest PRIVATE zio::engine)
 target_compile_options(ReleaseNotesTest PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 add_test(NAME ReleaseNotesTest COMMAND ReleaseNotesTest)
+
+if(WIN32)
+    add_executable(ExeResourcesTest ExeResourcesTest.cpp
+        ../tools/zio_editor/src/core/GameExport.cpp
+        ../tools/zio_editor/src/project/ProjectManager.cpp)
+    target_include_directories(ExeResourcesTest PRIVATE ../tools/zio_editor/src ../src)
+    target_compile_definitions(ExeResourcesTest PRIVATE ZIO_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
+    target_link_libraries(ExeResourcesTest PRIVATE zio::engine version)
+    target_compile_options(ExeResourcesTest PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+    add_test(NAME ExeResourcesTest COMMAND ExeResourcesTest)
+endif()

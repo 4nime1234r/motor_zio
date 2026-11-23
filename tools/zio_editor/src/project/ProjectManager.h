@@ -20,6 +20,7 @@ struct GameInfo
     std::string license;
     std::string id;
     std::string entryScene;
+    std::string icon;
     bool allowImport = false;
 };
 

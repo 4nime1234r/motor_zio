@@ -114,7 +114,7 @@ std::string projectFileText(std::string_view name, const GameInfo& game = {})
     out += ",\n  \"version\": 1,\n  \"name\": ";
     zio::json::writeString(out, name);
     const bool hasGame = !game.title.empty() || !game.author.empty() || !game.description.empty() || !game.copyright.empty() ||
-                         !game.website.empty() || !game.license.empty() || !game.id.empty() || !game.entryScene.empty() ||
+                         !game.website.empty() || !game.license.empty() || !game.id.empty() || !game.entryScene.empty() || !game.icon.empty() ||
                          game.allowImport || game.version != "1.0.0";
     if (hasGame)
     {
@@ -136,6 +136,7 @@ std::string projectFileText(std::string_view name, const GameInfo& game = {})
         text("license", game.license);
         text("id", game.id);
         text("entryScene", game.entryScene);
+        text("icon", game.icon);
         out += ",\n    \"allowImport\": ";
         out += game.allowImport ? "true" : "false";
         out += "\n  }";
@@ -385,6 +386,7 @@ bool ProjectManager::loadProject(const fs::path& path, std::string* error)
         read("license", game.license);
         read("id", game.id);
         read("entryScene", game.entryScene);
+        read("icon", game.icon);
         if (const zio::json::Value* field = gameValue->find("allowImport"))
             if (const auto* flag = std::get_if<bool>(&field->v))
                 game.allowImport = *flag;

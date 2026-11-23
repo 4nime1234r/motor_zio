@@ -235,6 +235,34 @@ int main()
     }
 
     {
+        std::vector<std::uint8_t> text;
+        const std::string line = "{\"type\":\"Mesh\",\"position\":[1.0,2.0,3.0],\"visible\":true}\n";
+        while (text.size() < 3'000'000)
+            text.insert(text.end(), line.begin(), line.end());
+        writeAll(source / "assets" / "repetido.json", text);
+        std::vector<std::uint8_t> mixed = randomData(200'000, 9);
+        mixed.insert(mixed.end(), text.begin(), text.begin() + 400'000);
+        writeAll(source / "assets" / "mixto.bin", mixed);
+
+        std::vector<FileEntry> packed = {{source / "assets" / "repetido.json", "assets/repetido.json"},
+                                         {source / "assets" / "mixto.bin", "assets/mixto.bin"},
+                                         {source / "assets" / "vacio.bin", "assets/vacio.bin"}};
+        WriteOptions options = fast(Protection::Password);
+        options.password     = "comprimir paquetes";
+        const fs::path pkg   = base / "comprimido.zgame";
+        check(writePackage(packed, pkg, info, options, &error), "se escribe un paquete con archivos comprimibles");
+        const auto packedSize = fs::file_size(pkg);
+        check(packedSize < 1'000'000, "los datos repetidos ocupan mucho menos dentro del paquete");
+        OpenCredentials good;
+        good.password = "comprimir paquetes";
+        check(extractPackage(pkg, base / "out_zip", good, nullptr, &error), "se extrae un paquete comprimido");
+        check(readAll(source / "assets" / "repetido.json") == readAll(base / "out_zip" / "assets" / "repetido.json") &&
+                  readAll(source / "assets" / "mixto.bin") == readAll(base / "out_zip" / "assets" / "mixto.bin") &&
+                  fs::exists(base / "out_zip" / "assets" / "vacio.bin"),
+              "los archivos comprimidos se recuperan idénticos");
+    }
+
+    {
         const std::string first  = newPackageId();
         const std::string second = newPackageId();
         check(first.size() == 36 && first != second, "los identificadores son únicos");

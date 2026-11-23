@@ -11,6 +11,7 @@
 #include <set>
 
 #include "internal/Json.h"
+#include "pack/Lz.h"
 #include "zio/core/Platform.h"
 
 extern "C"
@@ -39,7 +40,7 @@ namespace
 {
 
 constexpr std::uint8_t kMagic[8]        = {'Z', 'I', 'O', 'P', 'K', 'G', 0, 1};
-constexpr std::uint32_t kVersion        = 1;
+constexpr std::uint32_t kVersion        = 2;
 constexpr std::uint32_t kChunkSize      = 1u << 20;
 constexpr std::uint32_t kMaxMeta        = 1u << 20;
 constexpr std::uint64_t kMaxPlain       = 64ull << 30;
@@ -147,6 +148,7 @@ bool infoFromJson(std::string_view text, PackageInfo& info)
 
 struct RawHeader
 {
+    std::uint32_t version = kVersion;
     std::vector<std::uint8_t> bytes;
     PackageHeader header;
     std::array<std::uint8_t, 32> salt{};
@@ -203,7 +205,9 @@ bool parseHeader(std::istream& in, RawHeader& raw, std::string* error)
         fail(error, "El archivo no es un paquete de Zio.");
         return false;
     }
-    if (fixed[7] != kMagic[7] || get32(fixed + 8) != kVersion)
+    const std::uint32_t version = get32(fixed + 8);
+    raw.version                 = version;
+    if (fixed[7] != kMagic[7] || version < 1 || version > kVersion)
     {
         fail(error, "El paquete es de una versión de Zio no compatible.");
         return false;
@@ -381,9 +385,13 @@ private:
         std::uint8_t aad[41];
         chunkNonce(raw_.noncePrefix, index_, nonce);
         chunkAad(hash_, index_, last, aad);
-        std::vector<std::uint8_t> cipher(buffer_.size());
+        std::vector<std::uint8_t> packed = lz::compress(buffer_.data(), buffer_.size());
+        const bool useCompressed         = packed.size() < buffer_.size();
+        const std::uint8_t* source       = useCompressed ? packed.data() : buffer_.data();
+        const std::size_t sourceSize     = useCompressed ? packed.size() : buffer_.size();
+        std::vector<std::uint8_t> cipher(sourceSize);
         std::uint8_t mac[16];
-        crypto_aead_lock(cipher.data(), mac, key_.data(), nonce, aad, sizeof(aad), buffer_.data(), buffer_.size());
+        crypto_aead_lock(cipher.data(), mac, key_.data(), nonce, aad, sizeof(aad), source, sourceSize);
 
         std::vector<std::uint8_t> record;
         put32(record, static_cast<std::uint32_t>(cipher.size()));
@@ -743,7 +751,9 @@ bool walkChunks(std::istream& in, const RawHeader& raw, std::uint64_t fileSize, 
             return false;
         }
         const std::uint32_t length = get32(lengthBytes);
-        if (length == 0 || length > raw.chunkSize || consumedPlain + length > raw.header.plainSize ||
+        const std::uint64_t plainLength =
+            raw.version >= 2 ? std::min<std::uint64_t>(raw.chunkSize, raw.header.plainSize - consumedPlain) : length;
+        if (length == 0 || length > raw.chunkSize || length > plainLength || consumedPlain + plainLength > raw.header.plainSize ||
             position + 20 + length + reserve > fileSize)
         {
             fail(error, "El paquete está incompleto o dañado.");
@@ -761,10 +771,10 @@ bool walkChunks(std::istream& in, const RawHeader& raw, std::uint64_t fileSize, 
             crypto_blake2b_update(running, mac, 16);
             crypto_blake2b_update(running, cipher.data(), length);
         }
-        const bool last = consumedPlain + length == raw.header.plainSize;
+        const bool last = consumedPlain + plainLength == raw.header.plainSize;
         if (!onChunk(index, last, length, mac, cipher))
             return false;
-        consumedPlain += length;
+        consumedPlain += plainLength;
         position += 20 + length;
         ++index;
     }
@@ -1000,6 +1010,7 @@ bool extractPackage(const fs::path& package, const fs::path& destination, const 
 
     auto sinkPtr    = std::make_unique<ArchiveSink>(destination);
     ArchiveSink& sink = *sinkPtr;
+    std::uint64_t producedPlain = 0;
     bool ok = walkChunks(
         in, raw, fileSize, raw.bytes.size(), raw.header.signedPackage ? &running : nullptr,
         [&](std::uint64_t index, bool last, std::uint32_t length, const std::uint8_t* mac, std::vector<std::uint8_t>& cipher) {
@@ -1013,6 +1024,23 @@ bool extractPackage(const fs::path& package, const fs::path& destination, const 
                 fail(error, index == 0 ? "Contraseña o clave incorrecta, o el paquete está dañado."
                                        : "El paquete fue modificado o está dañado.");
                 return false;
+            }
+            if (raw.version >= 2)
+            {
+                const std::uint64_t expected = std::min<std::uint64_t>(raw.chunkSize, raw.header.plainSize - producedPlain);
+                if (length < expected)
+                {
+                    std::vector<std::uint8_t> unpacked(static_cast<std::size_t>(expected));
+                    if (!lz::decompress(plain.data(), plain.size(), unpacked.data(), unpacked.size()))
+                    {
+                        crypto_wipe(plain.data(), plain.size());
+                        fail(error, "El paquete está dañado (datos comprimidos inválidos).");
+                        return false;
+                    }
+                    crypto_wipe(plain.data(), plain.size());
+                    plain.swap(unpacked);
+                }
+                producedPlain += expected;
             }
             const bool consumed = sink.consume(plain.data(), plain.size(), error);
             crypto_wipe(plain.data(), plain.size());

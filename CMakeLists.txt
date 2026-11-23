@@ -63,6 +63,7 @@ add_library(engine STATIC
     src/scripting/DotNet.cpp
     src/scripting/NativeScripts.cpp
     src/pack/Package.cpp
+    src/pack/Lz.cpp
     third_party/monocypher/monocypher.c
     src/scripting/Language.cpp
     src/scripting/ZioLanguage.cpp

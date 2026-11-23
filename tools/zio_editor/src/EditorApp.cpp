@@ -1190,6 +1190,10 @@ void EditorApp::showGameInfo()
     auto* license     = field("Licencia del juego", current.license);
     auto* scene       = field("Escena inicial (assets/scenes/...)",
                               current.entryScene.empty() ? currentSceneRelative() : current.entryScene);
+    content->add<Label>(std::string("Icono del juego (archivo .ico del proyecto, vacío = icono de Zio)"));
+    auto* icon = addPathField(content.get(), Browse::OpenFile, "Icono del juego",
+                              {{"Icono (.ico)", "*.ico"}, {"Todos los archivos", "*.*"}});
+    icon->setText(current.icon);
     auto* allow       = content->add<CheckBox>(std::string("Permitir abrir este juego en el editor (importar)"));
     allow->setChecked(current.allowImport);
     auto* error = content->add<Label>(std::string());
@@ -1198,7 +1202,7 @@ void EditorApp::showGameInfo()
     dialog->setWidth(560.f);
 
     Dialog* raw  = dialog.get();
-    auto confirm = [this, raw, current, title, author, version, description, copyright, website, license, scene, allow, error]() {
+    auto confirm = [this, raw, current, title, author, version, description, copyright, website, license, scene, icon, allow, error]() {
         if (title->text().empty() || version->text().empty())
         {
             error->setText("El nombre y la versión no pueden estar vacíos.");
@@ -1213,6 +1217,7 @@ void EditorApp::showGameInfo()
         info.website      = website->text();
         info.license      = license->text();
         info.entryScene   = scene->text();
+        info.icon         = icon->text();
         info.allowImport  = allow->checked();
         if (info.id.empty())
             info.id = zio::pack::newPackageId();

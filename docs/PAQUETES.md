@@ -43,7 +43,7 @@ Todos los números son little-endian.
 
 ```
 magia            8 bytes   "ZIOPKG" 0x00 0x01
-versión          u32       1
+versión          u32       2 (la 1 es igual, pero sin comprimir)
 protección       u8        0 archivo de clave, 1 contraseña, 2 sin contraseña
 banderas         u8        bit 0: firmado
 reservado        u16       0
@@ -62,6 +62,7 @@ bloques          [u32 longitud][16 bytes MAC][datos cifrados] ...
 firma            64 bytes  (solo si está firmado)
 ```
 
+- **Compresión (versión 2):** antes de cifrar, cada bloque de 1 MiB se comprime con un algoritmo LZ propio (tipo LZ4, sin dependencias). Si el resultado no es más pequeño, el bloque se guarda tal cual. Al leer, un bloque cuya longitud guardada es menor que el tamaño en claro que le toca se descomprime.
 - **Cifrado:** XChaCha20-Poly1305 por bloques. El nonce de cada bloque es el prefijo más el número de bloque, y los datos autenticados son el hash BLAKE2b de toda la cabecera, el número de bloque y si es el último. Así no se pueden cambiar la cabecera, reordenar bloques ni truncar el archivo sin que falle el descifrado.
 - **Clave:** con contraseña, Argon2id (256 MiB, 3 pasadas) y la sal de la cabecera; después se deriva la clave de cifrado con BLAKE2b.
 - **Firma:** Ed25519 sobre el BLAKE2b-512 de todos los bytes anteriores a la firma.
