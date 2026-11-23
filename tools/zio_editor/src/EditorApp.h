@@ -45,11 +45,13 @@ public:
 protected:
     bool onInit() override;
     void onBeforeTick(float dt) override;
+    void applyFonts(float scale);
     void onRender(float dt) override;
     void onShutdown() override;
     bool onCloseRequested() override;
 
 private:
+    float fontScale_ = 0.f;
     void buildUi();
     void buildTopBar(zio::ui::Widget* page);
     void buildStatusBar(zio::ui::Widget* page);

@@ -1,4 +1,5 @@
 #include "ui/ViewportController.h"
+#include "zio/platform/Window.h"
 
 #include <algorithm>
 #include <cmath>
@@ -428,10 +429,11 @@ void ViewportController::render(float dt)
     if (rect.w < 1.f || rect.h < 1.f)
         return;
 
-    const auto x = static_cast<std::uint32_t>(rect.x);
-    const auto y = static_cast<std::uint32_t>(rect.y);
-    const auto w = static_cast<std::uint32_t>(rect.w);
-    const auto h = static_cast<std::uint32_t>(rect.h);
+    const float scale = zio::platform::Window::instance().dpiScale();
+    const auto x      = static_cast<std::uint32_t>(rect.x * scale);
+    const auto y      = static_cast<std::uint32_t>(rect.y * scale);
+    const auto w      = static_cast<std::uint32_t>(rect.w * scale);
+    const auto h      = static_cast<std::uint32_t>(rect.h * scale);
 
     if (context_.playing())
     {

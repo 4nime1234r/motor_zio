@@ -27,6 +27,7 @@ struct BatchPainter::Impl
     std::vector<Rect> clips;
     std::vector<AtlasFont*> prepared;
     bool initialized = false;
+    float scale      = 1.f;
 
     bool init()
     {
@@ -92,10 +93,10 @@ struct BatchPainter::Impl
         const float nv0 = v0 + (v1 - v0) * ty0;
         const float nv1 = v0 + (v1 - v0) * ty1;
 
-        const std::array<math::Vec2, 4> positions = {math::Vec2{visible.x, visible.y},
-                                                     math::Vec2{visible.right(), visible.y},
-                                                     math::Vec2{visible.x, visible.bottom()},
-                                                     math::Vec2{visible.right(), visible.bottom()}};
+        const std::array<math::Vec2, 4> positions = {math::Vec2{visible.x * scale, visible.y * scale},
+                                                     math::Vec2{visible.right() * scale, visible.y * scale},
+                                                     math::Vec2{visible.x * scale, visible.bottom() * scale},
+                                                     math::Vec2{visible.right() * scale, visible.bottom() * scale}};
         const std::array<math::Vec2, 4> uvs       = {math::Vec2{nu0, nv0}, math::Vec2{nu1, nv0}, math::Vec2{nu0, nv1},
                                                      math::Vec2{nu1, nv1}};
         renderer::BatchRenderer::instance().submitQuad(positions, uvs, color, texture);
@@ -113,6 +114,11 @@ BatchPainter::~BatchPainter()
         if (impl_->round != render::kInvalidHandle)
             device.destroyTexture(impl_->round);
     }
+}
+
+void BatchPainter::setScale(float scale)
+{
+    impl_->scale = scale > 0.1f ? scale : 1.f;
 }
 
 bool BatchPainter::begin(float viewportWidth, float viewportHeight)
@@ -175,7 +181,8 @@ void BatchPainter::line(Vec2 from, Vec2 to, Color color, float thickness)
         return;
     const Vec2 normal{-delta.y / length * thickness * 0.5f, delta.x / length * thickness * 0.5f};
 
-    const std::array<math::Vec2, 4> positions = {from + normal, to + normal, from - normal, to - normal};
+    const float k                             = impl_->scale;
+    const std::array<math::Vec2, 4> positions = {(from + normal) * k, (to + normal) * k, (from - normal) * k, (to - normal) * k};
     const std::array<math::Vec2, 4> uvs       = {math::Vec2{0.5f, 0.5f}, math::Vec2{0.5f, 0.5f}, math::Vec2{0.5f, 0.5f},
                                                  math::Vec2{0.5f, 0.5f}};
     renderer::BatchRenderer::instance().submitQuad(positions, uvs, color, impl_->white);
@@ -185,7 +192,8 @@ void BatchPainter::triangle(Vec2 a, Vec2 b, Vec2 c, Color color)
 {
     if (color.a <= 0.f)
         return;
-    const std::array<math::Vec2, 4> positions = {a, b, c, c};
+    const float k                             = impl_->scale;
+    const std::array<math::Vec2, 4> positions = {a * k, b * k, c * k, c * k};
     const std::array<math::Vec2, 4> uvs       = {math::Vec2{0.5f, 0.5f}, math::Vec2{0.5f, 0.5f}, math::Vec2{0.5f, 0.5f},
                                                  math::Vec2{0.5f, 0.5f}};
     renderer::BatchRenderer::instance().submitQuad(positions, uvs, color, impl_->white);
@@ -215,8 +223,9 @@ void BatchPainter::text(Font& font, Vec2 topLeft, std::string_view utf8, Color c
     if (texture == render::kInvalidHandle)
         return;
 
-    float penX            = std::floor(topLeft.x + 0.5f);
-    const float baselineY = std::floor(topLeft.y + atlas->ascent() + 0.5f);
+    const float k         = impl_->scale;
+    float penX            = std::floor(topLeft.x * k + 0.5f) / k;
+    const float baselineY = std::floor((topLeft.y + atlas->ascent()) * k + 0.5f) / k;
 
     std::size_t index = 0;
     while (index < utf8.size())

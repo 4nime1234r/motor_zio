@@ -18,6 +18,7 @@ public:
     BatchPainter& operator=(const BatchPainter&) = delete;
 
     bool begin(float viewportWidth, float viewportHeight);
+    void setScale(float scale);
 
     void pushClip(const Rect& rect) override;
     void popClip() override;

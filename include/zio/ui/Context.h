@@ -29,6 +29,8 @@ public:
     const Theme& theme() const { return theme_; }
     void setTheme(const Theme& theme) { theme_ = theme; }
 
+    void setScale(float scale) { scale_ = scale > 0.1f ? scale : 1.f; }
+    float scale() const { return scale_; }
     void setSize(Vec2 size) { size_ = size; }
     Vec2 size() const { return size_; }
 
@@ -83,6 +85,7 @@ private:
     float tooltipTimer_    = 0.f;
     Theme theme_;
     Vec2 size_ = {800.f, 600.f};
+    float scale_ = 1.f;
     Widget* hovered_  = nullptr;
     Widget* focused_  = nullptr;
     Widget* captured_ = nullptr;

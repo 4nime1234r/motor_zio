@@ -15,9 +15,9 @@ protected:
     bool onInit() override
     {
         context_ = std::make_unique<ui::Context>();
-        if (auto font = ui::createSystemFont("Segoe UI", 17.f))
+        if (auto font = ui::createScaledSystemFont("Segoe UI", 17.f, false, platform::Window::instance().dpiScale()))
             context_->theme().font = font;
-        if (auto bold = ui::createSystemFont("Segoe UI", 17.f, true))
+        if (auto bold = ui::createScaledSystemFont("Segoe UI", 17.f, true, platform::Window::instance().dpiScale()))
             context_->theme().fontBold = bold;
         host_ = std::make_unique<ui::EngineHost>(*context_);
         build();

@@ -45,5 +45,6 @@ public:
 
 ZIO_API std::shared_ptr<Font> createFixedFont(float sizePx);
 ZIO_API std::shared_ptr<AtlasFont> createSystemFont(std::string_view family, float sizePx, bool bold = false);
+ZIO_API std::shared_ptr<AtlasFont> createScaledSystemFont(std::string_view family, float sizePx, bool bold, float scale);
 
 }

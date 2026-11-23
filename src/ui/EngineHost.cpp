@@ -122,6 +122,7 @@ struct EngineHost::Impl
     Context& context;
     BatchPainter painter;
     Modifiers modifiers;
+    float scale = 1.f;
     std::vector<events::ListenerId> listeners;
 
     explicit Impl(Context& ctx) : context(ctx) {}
@@ -136,13 +137,13 @@ EngineHost::EngineHost(Context& context) : impl_(std::make_unique<Impl>(context)
     context.setClipboardHandlers(&readClipboard, &writeClipboard);
 
     self->listeners.push_back(bus.onMouseMove([self](const events::MouseMoveEvent& e) {
-        self->context.mouseMove({e.x, e.y});
+        self->context.mouseMove({e.x / self->scale, e.y / self->scale});
     }));
     self->listeners.push_back(bus.onMouseButton([self](const events::MouseButtonEvent& e) {
-        self->context.mouseButton(e.button, e.down, {e.x, e.y}, self->modifiers);
+        self->context.mouseButton(e.button, e.down, {e.x / self->scale, e.y / self->scale}, self->modifiers);
     }));
     self->listeners.push_back(bus.onMouseScroll([self](const events::MouseScrollEvent& e) {
-        self->context.mouseScroll({e.x, e.y}, {e.scrollX, e.scrollY}, self->modifiers);
+        self->context.mouseScroll({e.x / self->scale, e.y / self->scale}, {e.scrollX, e.scrollY}, self->modifiers);
     }));
     self->listeners.push_back(bus.onKey([self](const events::KeyEvent& e) {
         switch (e.code)
@@ -177,7 +178,10 @@ EngineHost::~EngineHost()
 void EngineHost::frame(float dt)
 {
     auto& window = platform::Window::instance();
-    impl_->context.setSize({static_cast<float>(window.width()), static_cast<float>(window.height())});
+    impl_->scale = window.dpiScale();
+    impl_->context.setScale(impl_->scale);
+    impl_->painter.setScale(impl_->scale);
+    impl_->context.setSize({static_cast<float>(window.width()) / impl_->scale, static_cast<float>(window.height()) / impl_->scale});
     impl_->context.update(dt);
     window.setCursor(toShape(impl_->context.cursor()));
 }

@@ -87,6 +87,7 @@ add_library(engine STATIC
     src/ui/Fields.cpp
     src/ui/Menus.cpp
     src/ui/GdiFont.cpp
+    src/ui/ScaledFont.cpp
     src/ui/IconGrid.cpp
     src/ui/Text.cpp
     src/ui/Tree.cpp

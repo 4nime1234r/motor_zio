@@ -92,10 +92,7 @@ EditorApp::~EditorApp() = default;
 bool EditorApp::onInit()
 {
     ui_ = std::make_unique<zio::ui::Context>();
-    if (auto font = zio::ui::createSystemFont("Segoe UI", 17.f))
-        ui_->theme().font = font;
-    if (auto bold = zio::ui::createSystemFont("Segoe UI", 17.f, true))
-        ui_->theme().fontBold = bold;
+    applyFonts(zio::platform::Window::instance().dpiScale());
     host_ = std::make_unique<zio::ui::EngineHost>(*ui_);
     EditorIcons::init();
 
@@ -1053,8 +1050,19 @@ void EditorApp::refreshStatus()
     refreshUpdate();
 }
 
+void EditorApp::applyFonts(float scale)
+{
+    fontScale_ = scale;
+    if (auto font = zio::ui::createScaledSystemFont("Segoe UI", 17.f, false, scale))
+        ui_->theme().font = font;
+    if (auto bold = zio::ui::createScaledSystemFont("Segoe UI", 17.f, true, scale))
+        ui_->theme().fontBold = bold;
+}
+
 void EditorApp::onBeforeTick(float dt)
 {
+    if (const float scale = zio::platform::Window::instance().dpiScale(); scale != fontScale_)
+        applyFonts(scale);
     (void)dt;
     const auto now = std::chrono::steady_clock::now();
     realDt_        = std::min(std::chrono::duration<float>(now - lastTick_).count(), kFrameClamp);

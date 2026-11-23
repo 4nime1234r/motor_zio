@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -45,6 +46,8 @@ public:
     std::size_t drawn  = 0;
     bool pixelRead     = false;
     int center[4]      = {};
+    bool scaledFontOk      = false;
+    float dpi              = 0.f;
     int centerInstanced[4] = {};
     int centerTextured[4]  = {};
     int centerShadowed[4]  = {};
@@ -71,6 +74,12 @@ protected:
         fontLoaded = font != nullptr && font->lineHeight() > 0.f && font->textWidth("Hola") > 0.f;
         scene2d::Label label("Hola Zio", "Arial", 24.f);
         labelDrawn = label.contentSize().x > 0.f && label.contentSize().y > 0.f;
+        auto scaledFont = ui::createScaledSystemFont("Arial", 16.f, false, 2.f);
+        auto plainFont  = ui::createSystemFont("Arial", 16.f);
+        scaledFontOk    = scaledFont && plainFont && std::fabs(scaledFont->size() - 16.f) < 0.01f &&
+                       std::fabs(scaledFont->textWidth("Hola") - plainFont->textWidth("Hola")) < 3.f &&
+                       std::fabs(scaledFont->lineHeight() - plainFont->lineHeight()) < 2.f;
+        dpi = platform::Window::instance().dpiScale();
         return true;
     }
 
@@ -297,6 +306,8 @@ int main()
     check(app.drawn == 0 || app.bloomEdge > 0, "el bloom hace brillar el borde de los objetos claros");
     check(app.drawn == 0 || app.skinned == 1, "una malla con huesos se dibuja con el esqueleto en la GPU");
     check(app.drawn == 0 || (app.skinMoved > 120 && app.skinOrigin < 30), "los huesos de la GPU mueven la malla");
+    check(app.dpi >= 1.f, "la ventana informa su escala de pantalla");
+    check(app.scaledFontOk || !app.fontLoaded, "una fuente rasterizada al doble mantiene las medidas logicas");
     check(app.fullscreenSet && app.fullscreenMode && app.fullscreenWidth > 640, "la ventana pasa a pantalla completa");
     check(app.restoredMode && app.restoredWidth == 640, "la ventana vuelve a modo ventana con su tamano");
     check(app.drawn == 0 || app.culled == 2, "el descarte quita los objetos fuera de la camara");

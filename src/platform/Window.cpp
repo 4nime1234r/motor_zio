@@ -13,6 +13,7 @@
 #include <windowsx.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -314,6 +315,15 @@ struct Window::Impl
             return 0;
         }
 
+        case WM_DPICHANGED:
+        {
+            const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
+            if (suggested)
+                SetWindowPos(hwnd, nullptr, suggested->left, suggested->top, suggested->right - suggested->left,
+                             suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
+            return 0;
+        }
+
         case WM_SIZE:
             if (wParam == SIZE_MINIMIZED)
             {
@@ -372,6 +382,13 @@ struct Window::Impl
             if (!RegisterClassExW(&wc))
                 return false;
             classRegistered = true;
+        }
+
+        {
+            using SetAwareness = BOOL(WINAPI*)(DPI_AWARENESS_CONTEXT);
+            if (const HMODULE user = GetModuleHandleW(L"user32.dll"))
+                if (const auto set = reinterpret_cast<SetAwareness>(GetProcAddress(user, "SetProcessDpiAwarenessContext")))
+                    set(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         }
 
         RECT rect{0, 0, static_cast<LONG>(w), static_cast<LONG>(h)};
@@ -604,6 +621,50 @@ void* Window::nativeHandle() const
     return impl_->hwnd;
 }
 
+namespace
+{
+
+float forcedUiScale()
+{
+    const char* text = std::getenv("ZIO_UI_SCALE");
+    if (!text || !*text)
+        return 0.f;
+    const float value = static_cast<float>(std::atof(text));
+    return value >= 1.f && value <= 4.f ? value : 0.f;
+}
+
+}
+
+float Window::dpiScale() const
+{
+    if (const float forced = forcedUiScale(); forced > 0.f)
+        return forced;
+    if (!impl_->hwnd)
+        return 1.f;
+    using GetDpi = UINT(WINAPI*)(HWND);
+    if (const HMODULE user = GetModuleHandleW(L"user32.dll"))
+        if (const auto get = reinterpret_cast<GetDpi>(GetProcAddress(user, "GetDpiForWindow")))
+        {
+            const UINT dpi = get(impl_->hwnd);
+            if (dpi > 0)
+                return std::clamp(static_cast<float>(dpi) / 96.f, 1.f, 4.f);
+        }
+    return 1.f;
+}
+
+float Window::systemDpiScale()
+{
+    using GetDpi = UINT(WINAPI*)();
+    if (const HMODULE user = GetModuleHandleW(L"user32.dll"))
+        if (const auto get = reinterpret_cast<GetDpi>(GetProcAddress(user, "GetDpiForSystem")))
+        {
+            const UINT dpi = get();
+            if (dpi > 0)
+                return std::clamp(static_cast<float>(dpi) / 96.f, 1.f, 4.f);
+        }
+    return 1.f;
+}
+
 std::uint32_t Window::width() const
 {
     return impl_->width;
@@ -619,6 +680,7 @@ std::uint32_t Window::height() const
 #else
 
 #include <algorithm>
+#include <cstdlib>
 #include <vector>
 
 #define GLFW_INCLUDE_NONE
@@ -1073,6 +1135,41 @@ bool Window::setSize(std::uint32_t width, std::uint32_t height)
 void* Window::nativeHandle() const
 {
     return impl_->window;
+}
+
+namespace
+{
+
+float forcedUiScale()
+{
+    const char* text = std::getenv("ZIO_UI_SCALE");
+    if (!text || !*text)
+        return 0.f;
+    const float value = static_cast<float>(std::atof(text));
+    return value >= 1.f && value <= 4.f ? value : 0.f;
+}
+
+}
+
+float Window::dpiScale() const
+{
+    if (const float forced = forcedUiScale(); forced > 0.f)
+        return forced;
+    if (!impl_->window)
+        return 1.f;
+    float x = 1.f, y = 1.f;
+    glfwGetWindowContentScale(impl_->window, &x, &y);
+    return std::clamp(x, 1.f, 4.f);
+}
+
+float Window::systemDpiScale()
+{
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    if (!monitor)
+        return 1.f;
+    float x = 1.f, y = 1.f;
+    glfwGetMonitorContentScale(monitor, &x, &y);
+    return std::clamp(x, 1.f, 4.f);
 }
 
 std::uint32_t Window::width() const

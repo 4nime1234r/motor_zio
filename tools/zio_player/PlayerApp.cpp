@@ -115,9 +115,9 @@ protected:
         }
 
         ui_ = std::make_unique<zio::ui::Context>();
-        if (auto font = zio::ui::createSystemFont("Segoe UI", 17.f))
+        if (auto font = zio::ui::createScaledSystemFont("Segoe UI", 17.f, false, zio::platform::Window::instance().dpiScale()))
             ui_->theme().font = font;
-        if (auto bold = zio::ui::createSystemFont("Segoe UI", 17.f, true))
+        if (auto bold = zio::ui::createScaledSystemFont("Segoe UI", 17.f, true, zio::platform::Window::instance().dpiScale()))
             ui_->theme().fontBold = bold;
         host_ = std::make_unique<zio::ui::EngineHost>(*ui_);
 

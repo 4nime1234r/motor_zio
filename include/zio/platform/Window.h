@@ -60,6 +60,9 @@ public:
 
     void* nativeHandle() const;
 
+    float dpiScale() const;
+    static float systemDpiScale();
+
     std::uint32_t width() const;
     std::uint32_t height() const;
 
